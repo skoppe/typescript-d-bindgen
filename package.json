@@ -19,5 +19,5 @@
         "start": "npm run build && node dist/index.js"
     },
     "author": "Sebastiaan Koppe",
-    "license": "ISC"
+    "license": "MIT"
 }
