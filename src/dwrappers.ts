@@ -1,7 +1,7 @@
 import * as ir from './ir';
-import {hasTypeGotHandle, mangleFunctionName, mangleMethod, MangledName, FunctionKind, isNotVoid} from './utils'
+import {hasTypeGotHandle, mangleFunctionName, mangleMethod, MangledName, FunctionKind, isNotVoid, isLiteralOrUndefinedType} from './utils'
 
-export default function generateDWrapperCode(declarations: ir.Declaration[]) : string {
+export default function generateDWrapperCode(declarations: ir.Declaration[], packageName: string) : string {
     return declarations.map(declaration => {
         switch (declaration.declaration) {
             case 'alias': return aliasToString(declaration);
@@ -87,10 +87,8 @@ function structMemberToString(member: ir.StructMember, struct: ir.Struct) : stri
     const selfArgument: ir.Argument = {symbol: 'this.handle', type: {type: 'handle'}}
     switch(member.memberType) {
         case 'property': {
-            if (member.type.type === 'literal')
-                return '';
-            if (member.type.type === 'keyword' && member.type.name === 'undefined')
-                return '';
+            if (isLiteralOrUndefinedType(member.type))
+                return;
             const getMangledName = mangleMethod(struct, member, [], FunctionKind.getter);
             const bindingCall = generateBindingCall(getMangledName, [selfArgument]);
             const getter =
@@ -163,5 +161,5 @@ function enumMemberToString(member: ir.EnumMember) : string {
 
 function enumToString(enumeration: ir.Enum) : string {
     const members = enumeration.members.map(m => enumMemberToString(m)).join(",\n");
-    return `${enumeration.name} {\n${members}\n}`;
+    return `enum ${enumeration.name} {\n${members}\n}`;
 }

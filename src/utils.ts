@@ -51,5 +51,19 @@ export function mangleMethod(struct: ir.Struct, member: ir.StructMember, args: i
 }
 
 export function isNotVoid(type: ir.Type) : boolean {
-    return !(type.type === 'keyword' && type.name === 'void');
+    return !isVoid(type);
+}
+
+export function isVoid(type: ir.Type) : boolean {
+    return type.type === 'keyword' && type.name === 'void';
+}
+
+export function isLiteralOrUndefinedType(type: ir.Type) : boolean {
+    if (type.type === 'literal')
+        return true;
+    if (type.type === 'keyword' && type.name === 'undefined')
+        return true;
+    if (type.type === 'optional')
+        return isLiteralOrUndefinedType(type.baseType);
+    return false;
 }

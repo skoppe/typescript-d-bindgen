@@ -9,7 +9,10 @@ Generate D bindings to typescript, useful when targeting the web.
 
 - [x] generate D wrapper structs
 - [x] generate D binding functions
-- [ ] generate JS glue code
+- [x] generate JS glue code
+- [x] output files
+- [ ] write encode and decode js functions
+- [ ] write typescript interop helper templates
 - [ ] integrate with [Spasm bindings](https://github.com/skoppe/spasm)
 - [ ] CI/tests
 - [ ] package and distribute

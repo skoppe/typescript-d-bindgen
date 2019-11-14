@@ -185,14 +185,14 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
             return {declaration: 'enum', name: decl.name.getText(), members}
         },
         visitFunctionDeclaration: (decl: ts.FunctionDeclaration) : Declaration | null => {
-            const returnType = buildType(decl.type);
+            const returnType = buildType(decl.type, !!decl.questionToken);
             const templateParameters = buildTemplateParameters(decl.typeParameters)
             const parameters = buildParameters(decl.parameters)
             return {declaration: 'function', name: decl.name.getText(), returnType, templateParameters, parameters}
         },
         visitTypeParameterDeclaration: (decl: ts.TypeParameterDeclaration) : Declaration | null => {
-            const constraint: Type | null = decl.constraint && buildType(decl.constraint)
-            const def: Type | null = decl.default && buildType(decl.default)
+            const constraint: Type | null = decl.constraint && buildType(decl.constraint, false)
+            const def: Type | null = decl.default && buildType(decl.default, false)
             return {declaration: 'typeparameter', name: decl.name.getText(), constraint, def}
         },
         visitAliasDeclaration: (decl: ts.TypeAliasDeclaration) : Declaration | null => {
@@ -220,21 +220,21 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
 
     function buildParameters(parameters: ReadonlyArray<ts.ParameterDeclaration>) : Parameter[] {
         return parameters.map(parameter => {
-            return {type: buildType(parameter.type), name: parameter.name.getText(), optional: parameter.questionToken !== undefined}
+            return {type: buildType(parameter.type, !!parameter.questionToken), name: parameter.name.getText(), optional: parameter.questionToken !== undefined}
         })
     }
 
     function buildTemplateArguments(typeArguments: ReadonlyArray<ts.TypeNode>) : Type[] {
         if (typeArguments === undefined)
             return [];
-        return typeArguments.map(a => buildType(a));
+        return typeArguments.map(a => buildType(a, false));
     }
 
     function buildTemplateParameters(typeParameters: ReadonlyArray<ts.TypeParameterDeclaration>) : TemplateParameter[] {
         return (typeParameters || []).map(typeParameter => typeParameter.name.getText());
     }
 
-    function buildType(type: ts.TypeNode) : Type {
+    function buildType(type: ts.TypeNode, optional: boolean) : Type {
         const visitor = {
             visitKeywordType: (keyword: ts.KeywordTypeNode): Type => {
                 switch (keyword.kind) {
@@ -258,7 +258,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 if (union.types.length == 2) {
                     const idx = union.types.findIndex(t => t.kind == ts.SyntaxKind.NullKeyword);
                     if (idx !== -1) {
-                        return {type: 'optional', baseType: buildType(union.types[(idx + 1) % 2])}
+                        return {type: 'optional', baseType: buildType(union.types[(idx + 1) % 2], false)}
                     }
                 }
                 const types = iterateTypes<Type>(union.types, visitor, {type: 'unknown'})
@@ -275,7 +275,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {type:'literal', name}
             },
             visitArrayType: (type: ts.ArrayTypeNode) : Type => {
-                return {type:'array', elementType: buildType(type.elementType)}
+                return {type:'array', elementType: buildType(type.elementType, false)}
             },
             visitMappedType: (decl: ts.MappedTypeNode) : Type => {
                 // TODO: map to ir
@@ -291,7 +291,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
             visitFunctionType: (decl: ts.FunctionTypeNode) : Type => {
                 const parameters = buildParameters(decl.parameters)
                 const templateParameters = buildTemplateParameters(decl.typeParameters)
-                return {type:'function', returnType: buildType(decl.type), parameters, templateParameters}
+                return {type:'function', returnType: buildType(decl.type, false), parameters, templateParameters}
             },
             visitIntersectionType: (decl: ts.IntersectionTypeNode) : Type => {
                 return {type:'intersection', types: iterateTypes(decl.types, visitor, {type: 'unknown'})}
@@ -305,10 +305,10 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {type:'unknown'}
             },
             visitConditionalType: (type: ts.ConditionalTypeNode) : Type => {
-                let checkType = buildType(type.checkType)
-                let extendsType = buildType(type.extendsType)
-                let trueType = buildType(type.trueType)
-                let falseType = buildType(type.falseType)
+                let checkType = buildType(type.checkType, false)
+                let extendsType = buildType(type.extendsType, false)
+                let trueType = buildType(type.trueType, false)
+                let falseType = buildType(type.falseType, false)
                 return {type:'conditional', checkType, extendsType, trueType, falseType}
             },
             visitTypeLiteral: (type: ts.TypeLiteralNode) : Type => {
@@ -316,27 +316,30 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {type:'unknown'}
             },
             visitIndexedAccessType: (type: ts.IndexedAccessTypeNode) : Type => {
-                let indexType = buildType(type.objectType)
-                let objectType = buildType(type.indexType)
+                let indexType = buildType(type.objectType, false)
+                let objectType = buildType(type.indexType, false)
                 return {type:'indexed', objectType, indexType}
             },
             visitTypePredicateNode: (type: ts.TypePredicateNode) : Type => {
                 return {type:'predicate'}
             }
         }
-        return iterateType<Type>(type, visitor, {type: 'unknown'});
+        const baseType = iterateType<Type>(type, visitor, {type: 'unknown'});
+        if (optional)
+            return {type: 'optional', baseType}
+        return baseType
     }
 
     function buildMethod(method: ts.MethodSignature) : Method {
         let name = method.name.getText();
         let templateArguments = buildTemplateParameters(method.typeParameters);
         let parameters = buildParameters(method.parameters);
-        let returnType = buildType(method.type);
+        let returnType = buildType(method.type, !!method.questionToken);
         return {memberType: 'method', name, templateArguments, parameters, returnType, optional: method.questionToken !== undefined}
     }
 
     function buildAliasDeclaration(decl: ts.TypeAliasDeclaration) : Alias {
-        const type = buildType(decl.type)
+        const type = buildType(decl.type, false)
         let templateArguments = buildTemplateParameters(decl.typeParameters);
         return {
             declaration: 'alias',
@@ -362,7 +365,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {
                     memberType: 'property',
                     name: decl.name.getText(),
-                    type: buildType(decl.type),
+                    type: buildType(decl.type, !!decl.questionToken),
                     optional: decl.questionToken !== undefined
                 }
             }

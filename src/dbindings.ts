@@ -1,7 +1,7 @@
 import * as ir from './ir';
-import {hasTypeGotHandle, mangleFunctionName, mangleMethod, FunctionKind} from './utils'
+import {hasTypeGotHandle, mangleFunctionName, mangleMethod, FunctionKind, isLiteralOrUndefinedType} from './utils'
 
-export default function generateDBindingCode(declarations: ir.Declaration[]) : string {
+export default function generateDBindingCode(declarations: ir.Declaration[], packageName: string) : string {
     return declarations.map(declaration => {
         switch (declaration.declaration) {
             case 'function': return functionToString(declaration);
@@ -91,17 +91,15 @@ function structMemberToString(member: ir.StructMember, struct: ir.Struct) : stri
     const selfParameter: ir.Parameter = {name: 'self', type: {type: 'handle'}, optional: false}
     switch(member.memberType) {
         case 'property': {
-            if (member.type.type === 'literal')
-                return '';
-            if (member.type.type === 'keyword' && member.type.name === 'undefined')
-                return '';
+            if (isLiteralOrUndefinedType(member.type))
+                return;
             const getMangledName = mangleMethod(struct, member, [], FunctionKind.getter);
             const propertyParameter: ir.Parameter = {name: member.name, type: member.type, optional: false}
-            const getter = `extern (C) void ${getMangledName}(Handle, ${parameterToString(propertyParameter)});`
+            const result = typeToString(member.type, false)
+            const getter = `extern (C) ${result} ${getMangledName}(Handle);`
             const argument = functionParameterToArgument(propertyParameter)
             const setMangledName = mangleMethod(struct, member, [argument], FunctionKind.setter);
-            const result = typeToString(member.type, false)
-            const setter = `extern (C) ${result} ${setMangledName}(Handle);`
+            const setter = `extern (C) void ${setMangledName}(Handle, ${parameterToString(propertyParameter)});`
             return `${getter}\n${setter}`
         }
         case 'method':
