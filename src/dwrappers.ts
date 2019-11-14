@@ -1,5 +1,5 @@
 import * as ir from './ir';
-import {hasTypeGotHandle, mangleFunctionName, mangleMethod, MangledName, FunctionKind, isNotVoid, isLiteralOrUndefinedType} from './utils'
+import {hasTypeGotHandle, mangleFunctionName, mangleMethod, MangledName, FunctionKind, isNotVoid, isLiteralOrUndefinedType, getBindingType} from './utils'
 
 export default function generateDWrapperCode(declarations: ir.Declaration[], packageName: string) : string {
     return declarations.map(declaration => {
@@ -14,34 +14,34 @@ export default function generateDWrapperCode(declarations: ir.Declaration[], pac
 
 function aliasToString(alias: ir.Alias) : string {
     const templates = templateParametersToString(alias.templateArguments)
-    return `alias ${alias.name}${templates} = ${typeToString(alias.type, false)};`;
+    return `alias ${alias.name}${templates} = ${typeToString(alias.type)};`;
 }
 
 function templateArgumentsToString(arg: ir.Type[]) : string {
     if (arg.length == 0)
         return '';
-    return `!(${arg.map(a => typeToString(a, false)).join(", ")})`;
+    return `!(${arg.map(a => typeToString(a)).join(", ")})`;
 }
 
 function templateParameterToString( arg: ir.TemplateParameter): string {
     return arg;
 }
 
-function typeToString(type: ir.Type, optional: boolean) : string {
+function typeToString(type: ir.Type) : string {
     switch (type.type) {
-        case 'intersection': return `IntersectionType!(${type.types.map(t => typeToString(t, false)).join(", ")})`;
-        case 'union': return `UnionType!(${type.types.map(t => typeToString(t, false)).join(", ")})`
-        case 'literalunion': return `OneOf!(${type.types.map(t => typeToString(t, false)).join(", ")})`;
+        case 'intersection': return `IntersectionType!(${type.types.map(t => typeToString(t)).join(", ")})`;
+        case 'union': return `UnionType!(${type.types.map(t => typeToString(t)).join(", ")})`
+        case 'literalunion': return `OneOf!(${type.types.map(t => typeToString(t)).join(", ")})`;
         case 'reference': return `${type.name}${templateArgumentsToString(type.templateArguments)}`;
         case 'unknown': return "Unknown";
         case 'literal': return type.name;
         case 'keyword': return type.name;
-        case 'array': return `${typeToString(type.elementType, false)}[]`;
+        case 'array': return `${typeToString(type.elementType)}[]`;
         case 'mapped': return `Mapped`;
-        case 'function': return `${typeToString(type.returnType, false)} delegate(${type.parameters.map(p => parameterToString(p)).join(", ")})`;
+        case 'function': return `${typeToString(type.returnType)} delegate(${type.parameters.map(p => parameterToString(p)).join(", ")})`;
         case 'conditional': return `Conditional`;
-        case 'optional': return `Optional!(${typeToString(type.baseType, false)})`;
-        case 'indexed': return `GetMemberType!(${typeToString(type.indexType, false)}, ${typeToString(type.objectType, false)})`
+        case 'optional': return `Optional!(${typeToString(type.baseType)})`;
+        case 'indexed': return `GetMemberType!(${typeToString(type.indexType)}, ${typeToString(type.objectType)})`
         case 'predicate': return 'bool';
     }
     throw new Error(`Cannot map type ${type.type} to string`);
@@ -54,12 +54,16 @@ function templateParametersToString(args: ir.TemplateParameter[]) : string {
 }
 
 function parameterToString(param: ir.Parameter) : string {
-    return `${typeToString(param.type, param.optional)} ${param.name}`
+    return `${typeToString(param.type)} ${param.name}`
 }
 
 function argumentToString(arg: ir.Argument) : string {
-    if (hasTypeGotHandle(arg.type)) {
+    const bindingType = getBindingType(arg.type);
+    if (hasTypeGotHandle(bindingType)) {
         return `${arg.symbol}.handle`;
+    }
+    switch (bindingType.type) {
+        case 'optional': return `!${arg.symbol}.empty, ${arg.symbol}.front`
     }
     return arg.symbol;
 }
@@ -71,7 +75,7 @@ function generateBindingCall(mangledName: MangledName, args: ir.Argument[]) : st
 
 function wrapBindingCallReturn(returnType: ir.Type, call: string) : string {
     if (hasTypeGotHandle(returnType)) {
-        return `${typeToString(returnType, false)}(${call})`;
+        return `${typeToString(returnType)}(${call})`;
     }
     return call;
 }
@@ -92,13 +96,13 @@ function structMemberToString(member: ir.StructMember, struct: ir.Struct) : stri
             const getMangledName = mangleMethod(struct, member, [], FunctionKind.getter);
             const bindingCall = generateBindingCall(getMangledName, [selfArgument]);
             const getter =
-                `    ${typeToString(member.type, member.optional)} ${member.name}() {\n` +
+                `    ${typeToString(member.type)} ${member.name}() {\n` +
                 `        return ${wrapBindingCallReturn(member.type, bindingCall)};\n` +
                 `    }`
             const argument = {symbol: member.name, type: member.type}
             const setMangledName = mangleMethod(struct, member, [argument], FunctionKind.setter);
             const setter =
-                `    void ${member.name}(${typeToString(member.type, member.optional)} ${member.name}) {\n`+
+                `    void ${member.name}(${typeToString(member.type)} ${member.name}) {\n`+
                 `        ${generateBindingCall(setMangledName, [selfArgument, argument])};\n` +
                 `    }`
             return `${getter}\n${setter}`
@@ -109,7 +113,7 @@ function structMemberToString(member: ir.StructMember, struct: ir.Struct) : stri
             const parameters = member.parameters.map(parameterToString).join(", ");
             const mangledName = mangleMethod(struct, member, bindingArguments, FunctionKind.nomangle);
             const bindingCall = wrapWithReturnIfNotVoid(member.returnType, generateBindingCall(mangledName, bindingArguments));
-            return (`    ${typeToString(member.returnType, member.optional)} ${member.name}${templateArguments}(${parameters}) {\n` +
+            return (`    ${typeToString(member.returnType)} ${member.name}${templateArguments}(${parameters}) {\n` +
                     `        ${bindingCall};\n`+
                     `    }`
             );
@@ -150,7 +154,7 @@ function functionToString(func: ir.Function) : string {
     const parameters = func.parameters.map(parameterToString).join(", ");
     const mangledName = mangleFunctionName(func.name, bindingArguments, FunctionKind.root);
     const bindingCall = wrapWithReturnIfNotVoid(func.returnType, generateBindingCall(mangledName, bindingArguments));
-    return (`${typeToString(func.returnType, false)} ${func.name}${templateParameters}(${parameters}) {\n` +
+    return (`${typeToString(func.returnType)} ${func.name}${templateParameters}(${parameters}) {\n` +
             `    ${bindingCall};\n` +
             `}`);
 }
