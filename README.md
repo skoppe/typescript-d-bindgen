@@ -1,9 +1,9 @@
-# Create D Bindings to Typescript
+# Generate D Bindings to Typescript
 
 Warning: very experimental
 ---
 
-To create D bindings to typescript, useful when targeting the web.
+Generate D bindings to typescript, useful when targeting the web.
 
 ## TODO
 
