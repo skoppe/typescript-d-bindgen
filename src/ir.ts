@@ -5,7 +5,7 @@ export type TemplateParameter = string
 export type StructMember = Method | Property;
 export type Declaration = Struct | Enum | Alias | Function | TypeParameter | UnknownDeclaration;
 
-export type Type = IntersectionType | UnionType | ReferenceType | UnknownType | LiteralType | KeywordType | ArrayType | MappedType | FunctionType | ConditionalType | OptionalType | IndexedType | HandleType | LiteralUnionType | TypePredicate;
+export type Type = IntersectionType | UnionType | ReferenceType | UnknownType | LiteralType | KeywordType | ArrayType | MappedType | FunctionType | ConditionalType | OptionalType | IndexedType | HandleType | LiteralUnionType | TypePredicate | InstantiatedType;
 
 export interface IntersectionType {
     type: 'intersection'
@@ -80,6 +80,13 @@ export interface IndexedType {
 
 export interface HandleType {
     type: 'handle'
+}
+
+export interface InstantiatedType {
+    type: 'instantiated'
+    name: string
+    baseType: Type
+    templateArguments: Type[]
 }
 
 export interface TypePredicate {

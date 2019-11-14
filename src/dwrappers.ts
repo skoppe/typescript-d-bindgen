@@ -1,4 +1,5 @@
 import * as ir from './ir';
+import {hasTypeGotHandle, mangleFunctionName, mangleMethod, MangledName, FunctionKind, isNotVoid} from './utils'
 
 export default function generateDWrapperCode(declarations: ir.Declaration[]) : string {
     return declarations.map(declaration => {
@@ -56,27 +57,6 @@ function parameterToString(param: ir.Parameter) : string {
     return `${typeToString(param.type, param.optional)} ${param.name}`
 }
 
-function hasTypeGotHandle(type: ir.Type) : boolean {
-    switch (type.type) {
-        case 'intersection':
-        case 'union':
-            return false;
-        case 'reference':
-            const declaration = type.declaration();
-            switch (declaration.declaration) {
-                case 'struct': return true;
-                case 'alias' : return hasTypeGotHandle(declaration.type)
-                case 'enum' : return false;
-            }
-            throw new Error(`unknown declaration ${declaration.declaration}`)
-        case 'array':
-        case 'function': return false;
-        case 'optional': return false;
-        case 'handle': return false;
-    }
-    return false;
-}
-
 function argumentToString(arg: ir.Argument) : string {
     if (hasTypeGotHandle(arg.type)) {
         return `${arg.symbol}.handle`;
@@ -94,10 +74,6 @@ function wrapBindingCallReturn(returnType: ir.Type, call: string) : string {
         return `${typeToString(returnType, false)}(${call})`;
     }
     return call;
-}
-
-function isNotVoid(type: ir.Type) : boolean {
-    return !(type.type === 'keyword' && type.name === 'void');
 }
 
 function wrapWithReturnIfNotVoid(returnType: ir.Type, call: string) : string {
@@ -166,33 +142,6 @@ function doesFunctionNeedWrapper(func: ir.Function) : boolean {
     const returnTypeNeedsWrapper = isNotVoid(returnType) && hasTypeGotHandle(returnType);
     const paramNeedsWrapper = func.parameters.map(p => p.type).some(hasTypeGotHandle);
     return returnTypeNeedsWrapper || paramNeedsWrapper;
-}
-
-enum FunctionKind {
-    setter = 0,
-    getter = 1,
-    root = 2,
-    nomangle = 3
-}
-type Nominal<T, Name extends string> = T & { [Symbol.species]: Name; };
-type MangledName = Nominal<string, "MangledName">
-
-function mangleFunctionName(name: string, args: ir.Argument[], kind: FunctionKind) : MangledName {
-    // TODO: for overloads we need to involve the args in the mangling
-    function getPostfix() : string {
-        switch (kind) {
-            case FunctionKind.setter: return '_s';
-            case FunctionKind.getter: return '_g';
-            case FunctionKind.root: return '_r';
-            case FunctionKind.nomangle: return '';
-        }
-        throw new Error(`Unable to get functionkind ${kind} postfix`)
-    }
-    return (name + getPostfix()) as MangledName;
-}
-
-function mangleMethod(struct: ir.Struct, member: ir.StructMember, args: ir.Argument[], kind: FunctionKind) : MangledName {
-    return mangleFunctionName(`${struct.name}_${member.name}`, args, kind)
 }
 
 function functionToString(func: ir.Function) : string {

@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import 'source-map-support/register'
 import generateDWrapperCode from './dwrappers';
+import generateDBindingCode from './dbindings';
 import { irVisitor } from './ir';
 import { iterateDeclarations } from './visitor';
 import * as minimist from 'minimist';
@@ -22,7 +23,8 @@ function main(args: minimist.ParsedArgs) {
     const sourceFile = program.getSourceFile(inputFile);
     const declarations = iterateDeclarations([sourceFile], irVisitor("tradingview", program.getTypeChecker()))
 
-    console.log(generateDWrapperCode(declarations));
+    // console.log(generateDWrapperCode(declarations));
+    console.log(generateDBindingCode(declarations));
 }
 
 main(minimist(process.argv.slice(2)));
