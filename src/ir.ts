@@ -97,13 +97,11 @@ export interface Property {
     memberType: 'property'
     name: string
     type: Type
-    optional: boolean
 }
 
 export interface Parameter {
     name: string
     type: Type
-    optional: boolean
     // default: string  // TODO: handle default parameters as well
 }
 
@@ -118,7 +116,6 @@ export interface Method {
     templateArguments: TemplateParameter[]
     parameters: Parameter[]
     returnType: Type
-    optional: boolean
 }
 
 export interface Struct {
@@ -220,7 +217,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
 
     function buildParameters(parameters: ReadonlyArray<ts.ParameterDeclaration>) : Parameter[] {
         return parameters.map(parameter => {
-            return {type: buildType(parameter.type, !!parameter.questionToken), name: parameter.name.getText(), optional: parameter.questionToken !== undefined}
+            return {type: buildType(parameter.type, !!parameter.questionToken), name: parameter.name.getText()}
         })
     }
 
@@ -335,7 +332,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
         let templateArguments = buildTemplateParameters(method.typeParameters);
         let parameters = buildParameters(method.parameters);
         let returnType = buildType(method.type, !!method.questionToken);
-        return {memberType: 'method', name, templateArguments, parameters, returnType, optional: method.questionToken !== undefined}
+        return {memberType: 'method', name, templateArguments, parameters, returnType}
     }
 
     function buildAliasDeclaration(decl: ts.TypeAliasDeclaration) : Alias {
@@ -365,8 +362,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {
                     memberType: 'property',
                     name: decl.name.getText(),
-                    type: buildType(decl.type, !!decl.questionToken),
-                    optional: decl.questionToken !== undefined
+                    type: buildType(decl.type, !!decl.questionToken)
                 }
             }
         }

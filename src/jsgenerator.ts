@@ -226,13 +226,13 @@ function canTypeBeReturned(type: ir.Type) : boolean {
 }
 
 function structMemberToString(member: ir.StructMember, struct: ir.Struct) : string {
-    const selfParameter: ir.Parameter = {name: 'ctx', type: {type: 'handle'}, optional: false}
+    const selfParameter: ir.Parameter = {name: 'ctx', type: {type: 'handle'}}
     switch(member.memberType) {
         case 'property': {
             if (isLiteralOrUndefinedType(member.type))
                 return;
             const getMangledName = mangleMethod(struct, member, [], FunctionKind.getter);
-            const propertyParameter: ir.Parameter = {name: member.name, type: member.type, optional: false}
+            const propertyParameter: ir.Parameter = {name: member.name, type: member.type}
             const getLHS = `objects[ctx].${member.name}`;
             const getExpression = generateResultEncoding(member.type, getLHS);
             const getParameters = generateFunctionParameterNames(member.type, [selfParameter]).join(", ")

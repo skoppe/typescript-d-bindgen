@@ -51,19 +51,19 @@ function templateParametersToString(args: ir.TemplateParameter[]) : string {
 function parameterToString(param: ir.Parameter) : string {
     const bindingType = getBindingType(param.type)
     switch (bindingType.type) {
-        case 'optional': return `bool, ${parameterToString({type: bindingType.baseType, optional: false, name: param.name})}`
+        case 'optional': return `bool, ${parameterToString({type: bindingType.baseType, name: param.name})}`
     }
     return `${typeToString(bindingType)}`
 }
 
 function structMemberToString(member: ir.StructMember, struct: ir.Struct) : string {
-    const selfParameter: ir.Parameter = {name: 'self', type: {type: 'handle'}, optional: false}
+    const selfParameter: ir.Parameter = {name: 'self', type: {type: 'handle'}}
     switch(member.memberType) {
         case 'property': {
             if (isLiteralOrUndefinedType(member.type))
                 return;
             const getMangledName = mangleMethod(struct, member, [], FunctionKind.getter);
-            const propertyParameter: ir.Parameter = {name: member.name, type: member.type, optional: false}
+            const propertyParameter: ir.Parameter = {name: member.name, type: member.type}
             const result = typeToString(member.type)
             const getter = `extern (C) ${result} ${getMangledName}(Handle);`
             const argument = functionParameterToArgument(propertyParameter)
