@@ -1,30 +1,28 @@
 import * as ts from 'typescript';
 import 'source-map-support/register'
-import createDBindingsGenerator from './dbindings';
 import generateDWrapperCode from './dwrappers';
-import createJsGlueGenerator from './jsglue';
-import { irVisitor, Declaration } from './ir';
-import { walkDeclarations, logVisitor } from './visitor';
+import { irVisitor } from './ir';
+import { iterateDeclarations } from './visitor';
+import * as minimist from 'minimist';
+import * as process from 'process'
+import * as fs from 'fs';
 
-const compilerOptions = {} as ts.CompilerOptions;
-const compilerHost: ts.CompilerHost = ts.createCompilerHost(compilerOptions);
+function main(args: minimist.ParsedArgs) {
+    if (!args.file) {
+        throw new Error("Excepted --file argument denoting input typescript file");
+    }
+    if (!fs.existsSync(args.file)) {
+        throw new Error(`File ${args.file} does not exist`);
+    }
 
-const program: ts.Program = ts.createProgram(["node_modules/lightweight-charts/dist/typings.d.ts"], compilerOptions, compilerHost);
+    const inputFile = args.file;
+    const compilerOptions = {} as ts.CompilerOptions;
+    const compilerHost: ts.CompilerHost = ts.createCompilerHost(compilerOptions);
+    const program: ts.Program = ts.createProgram([inputFile], compilerOptions, compilerHost);
+    const sourceFile = program.getSourceFile(inputFile);
+    const declarations = iterateDeclarations([sourceFile], irVisitor("tradingview", program.getTypeChecker()))
 
-const typeChecker = program.getTypeChecker();
-
-const getSymbol = (declaration: ts.Declaration) => {
-    let symbol: ts.Symbol | undefined = (declaration as any).symbol;
-    return symbol;
+    console.log(generateDWrapperCode(declarations));
 }
 
-const sourceFile = program.getSourceFile("node_modules/lightweight-charts/dist/typings.d.ts");
-
-const moduleSymbol: ts.Symbol | undefined = getSymbol(sourceFile);
-
-// console.log(JSON.stringify(createIR("tradingview").generate(moduleSymbol.exports), null, 4));
-program.getTypeChecker().getAliasedSymbol
-
-const declarations: Declaration[] = walkDeclarations(moduleSymbol.declarations, irVisitor("tradingview", program.getTypeChecker()))
-
-console.log(generateDWrapperCode(declarations));
+main(minimist(process.argv.slice(2)));

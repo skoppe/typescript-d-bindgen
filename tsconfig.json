@@ -4,11 +4,11 @@
         "noImplicitAny": true,
         "removeComments": true,
         "preserveConstEnums": true,
-        "outFile": "./built/local/tsc.js",
+        "outDir": "./dist",
         "sourceMap": true
     },
     "include": [
-        "src/**/*"
+        "src/index.ts"
     ],
     "exclude": [
         "node_modules",
