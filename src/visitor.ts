@@ -50,6 +50,8 @@ export function iterateDeclarations<T>(decls: ReadonlyArray<ts.Node>, v: Visitor
             return v.visitAliasDeclaration(declaration as ts.TypeAliasDeclaration);
         else if (ts.isExportDeclaration(declaration))
             return v.visitExportDeclaration(declaration as ts.ExportDeclaration)
+        else if (ts.isEmptyStatement(declaration))
+            return;
         else
             throw new Error(`no declaration visitor for kind ${declaration.kind}`)
     }).filter(d => !!d));

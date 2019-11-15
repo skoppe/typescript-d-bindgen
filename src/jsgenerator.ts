@@ -46,11 +46,14 @@ const setBool = (ptr, val) => (memory.heapi32u[ptr/4] = +val),
       spasm_encode_string = encoder.string,
       spasm_decode_string = decoder.string,
       spasm_indirect_function_get = (ptr)=>spasm.instance.exports.__indirect_function_table.get(ptr),
-  spasm_decode_Handle = decode_handle,
+  spasm_decode_handle = decode_handle,
   spasm_decode_sequence = decode_handle;
 `;
-    const encoders = 'const customencoder = "";';
-    const decoders = 'const customdecoder = "";';
+    const types = extractTypesFromDeclarations(declarations);
+    const encoders = getEncoders(types.encoders);
+    const decoders = getDecoders(types.decoders);
+    // console.log(decoders);
+    // throw new Error("break");
     const exportOpening = `export let jsExports = { '${packageName}': {`
     const exports = declarations.map(declaration => {
         switch (declaration.declaration) {
@@ -59,7 +62,199 @@ const setBool = (ptr, val) => (memory.heapi32u[ptr/4] = +val),
         }
     }).filter(d => !!d).join(",\n");
     const exportClosing = `} };`
-    return [prefix, encoders, decoders, exportOpening, exports, exportClosing].join("\n");
+    return [prefix, encoders, decoders, exportOpening, exports, exportClosing].filter(i => !!i).join("\n");
+}
+
+interface TypeInterfaces {
+    encoders: ir.Type[]
+    decoders: ir.Type[]
+}
+
+function extractTypesFromFunction(func: ir.Function) : TypeInterfaces {
+    return {encoders: [func.returnType],
+            decoders: func.parameters.map(p => p.type)};
+}
+
+function extractTypesFromStruct(declaration: ir.Struct) : TypeInterfaces {
+    return declaration.members.map(member => {
+        switch(member.memberType) {
+            case 'method':
+                return {encoders: [member.returnType],
+                        decoders: member.parameters.map(p => p.type)};
+            case 'property':
+                return {encoders: [member.type],
+                        decoders: [member.type]};
+        }
+    })
+        .filter(t => !!t)
+        .reduce((a,b) => ({encoders: a.encoders.concat(b.encoders).filter(e => !!e),
+                           decoders: a.decoders.concat(b.decoders).filter(d => !!d)}));
+}
+
+export function extractBaseTypes(types: ir.Type[]) : ir.Type[] {
+    return types.map(type => {
+        switch (type.type) {
+            case 'union':
+                return type.types.concat(extractBaseTypes(type.types));
+            case 'optional':
+                return [type.baseType].concat(extractBaseTypes([type.baseType]));
+            case 'array':
+                return [type.elementType].concat(extractBaseTypes([type.elementType]));
+        }
+    }).filter(t => !!t).reduce((acc, items) => (acc.concat(items)), []);
+}
+
+export function extractTypesFromDeclarations(declarations: ir.Declaration[]) : TypeInterfaces {
+    const interfaces = declarations.map(declaration => {
+        switch (declaration.declaration) {
+            case 'function': return extractTypesFromFunction(declaration);
+            case 'struct': return extractTypesFromStruct(declaration);
+        }
+    }).filter(d => !!d)
+        .reduce((a,b) => ({encoders: a.encoders.concat(b.encoders).filter(e => !!e),
+                           decoders: a.decoders.concat(b.decoders).filter(d => !!d)}));
+    return {encoders: interfaces.encoders.concat(extractBaseTypes(interfaces.encoders)).filter(t => !isLiteralOrUndefinedType(t)),
+            decoders: interfaces.decoders.concat(extractBaseTypes(interfaces.decoders)).filter(t => !isLiteralOrUndefinedType(t))};
+}
+
+interface NamedType {
+    name: string
+    type: ir.Type
+}
+
+function dedupeNamedTypes(types: NamedType[]) : NamedType[] {
+    return types.sort((a,b) => a.name < b.name ? -1 : +(b.name > a.name)+1)
+        .reduce((acc,item)=>{
+            if (acc.length == 0 || acc[acc.length-1].name !== item.name)
+                acc.push(item);
+            return acc;
+        },[])
+}
+
+function getEncoders(types: ir.Type[]) : string {
+    const encoders = dedupeNamedTypes(types.map(type => ({name: getTypeEncoderName(type), type})))
+        .filter(d => !hasTypeGotHandle(d.type) && !canTypeBeReturned(d.type))
+        .map(generateEncoder);
+
+    if (encoders.length == 0)
+        return '';
+    return `const ${encoders};`;
+}
+
+function generateEncoder(type: NamedType) : string {
+    return "todo"
+}
+
+function typeNeedsDecoding(type: ir.Type) : boolean {
+    const defaultDecoders = ["spasm_decode_string", "spasm_decode_handle"];
+    if (hasTypeGotHandle(type) || canTypeBeReturned(type))
+        return false;
+    const decoderName = getTypeDecoderName(type);
+    return !defaultDecoders.find(e => e === decoderName);
+}
+
+export function getDecoders(types: ir.Type[]) : string {
+    const decoders = dedupeNamedTypes(types.filter(typeNeedsDecoding).map(type => ({name: getTypeDecoderName(type), type})))
+        .map(generateDecoder).filter(d => !!d).join(",\n")
+
+    if (decoders.length == 0)
+        return '';
+    return `const ${decoders};`;
+}
+
+function getTypeDecoderFunction(type: ir.Type) : string {
+    const bindingType = getBindingType(type);
+    if (bindingType.type === 'keyword') {
+        switch (bindingType.name) {
+            case 'double': return `getDouble`;
+            case 'bool': return `getBool`;
+        }
+    }
+    return getTypeDecoderName(bindingType)
+}
+
+function generateDecoder(decoder: NamedType) : string {
+    const type = getBindingType(decoder.type);
+    switch (type.type) {
+        case 'predicate': throw new Error("no need to decode predicate type");
+        case 'keyword':
+            // TODO: do Any and BigInt
+            return `${decoder.name} = (ptr) => {\n todo keyword ${type.name}\n}`;;
+        case 'reference':
+            const declaration = type.declaration()
+            switch (declaration.declaration) {
+                case 'struct':
+                    return `${declaration.name} = spasm_decode_handle`; // TODO: mangle template args as well
+                case 'alias':
+                    return generateDecoder({name: getTypeDecoderName(type), type: declaration.type}); // TODO: mangle template args as well
+                case 'enum':
+                    if (decoder.name === "spasm_decode_string")
+                        return;
+                    throw new Error("Enums are either passed via int or via string (spasm_decode_string)")
+                case 'typeparameter': return declaration.name; // TODO: what about this?
+            }
+            console.log(declaration);
+            throw new Error("missing type decoder")
+        case 'union': {
+            const parts = type.types.map(getBindingType).map((type, idx) => {
+                return (`    if (getUInt(ptr) === ${idx})\n` +
+                        `        return ${getTypeDecoderFunction(type)}(ptr+4);`);
+            }).join("\n");
+            return (`${decoder.name} = (ptr) => {\n`+
+                    `${parts}\n`+
+                    `}`)
+        }
+        case 'intersection': return `${decoder.name} = (ptr) => {\n todo\n}`;
+        case 'literalunion': {
+            const values = `const vals = [${type.types.map(type => type.name).join(", ")}];`;
+            return (`${decoder.name} = (ptr) => {\n` +
+                    `    ${values};\n` +
+                    `    return vals[ptr];\n` +
+                    `}`);
+        }
+        case 'mapped': return `${decoder.name} = (ptr) => {\n todo\n}`;
+        case 'optional':
+            // TODO: determine size of base type
+            const sizeOfBase = 4;
+            return (`${decoder.name} = (ptr) => {\n` +
+                    `    if (getBool(ptr+${sizeOfBase}))\n` +
+                    `        return ${getTypeDecoderFunction(type.baseType)}(ptr);\n` +
+                    `}`);
+        case 'function': return `${decoder.name} = (ptr) => {\n todo\n}`;
+        case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
+        case 'literal': throw new Error("Cannot decode literal types")
+        case 'array': {
+            if (type.elementType.type === 'keyword') {
+                switch (type.elementType.name) {
+                    // case 'number':
+                    case 'double': return (`${decoder.name} = (len, offset) => {\n` +
+                                           `    if (!offset) {\n` +
+                                           `        offset = getUInt(len+4);\n` +
+                                           `        len = getUInt(len);\n` +
+                                           `    }\n` +
+                                           `    return new Float64Array(spasm.memory.buffer, offet, len);\n` +
+                                           `}`);
+                }
+            }
+            // TODO: determine size of element type
+            const sizeOfElement = 4;
+            // TODO: if it is a PDO we can proxy it (although we have to somehow prevent the memory from being freed in D)
+            return (`${decoder.name} = (len, offset) => {\n` +
+                    `    if (!offset) {\n` +
+                    `        offset = getUInt(len+1);\n` +
+                    `        len = getUInt(len);\n` +
+                    `    }\n` +
+                    `    let data = [];\n` +
+                    `    for(var i = 0; i < len; i++) {\n` +
+                    `        data.push(${getTypeDecoderFunction(type.elementType)}(offset + (i * ${sizeOfElement})))\n` +
+                    `    }\n` +
+                    `}`);
+        }
+        case 'indexed': return `${decoder.name} = (ptr) => {\n todo\n}`;
+        case 'instantiated': return `${decoder.name} = (ptr) => {\n todo\n}`;
+    }
+    console.log(decoder);
+    throw new Error(`missing type decoder for ${type.type}`)
 }
 
 function templateArgumentsToString(arg: ir.Type[]) : string {
@@ -132,7 +327,7 @@ function generateFunctionParameterNames(returnType: ir.Type, params: ir.Paramete
     return ['rawResult'].concat(params.map(parameterToString));
 }
 
-function mangleType(type: ir.Type) : string {
+function mangleTypeForEncoding(type: ir.Type) : string {
     // TODO: primitive types like int/float are simple as well
     switch (type.type) {
         case 'predicate': return 'predicate';
@@ -144,33 +339,38 @@ function mangleType(type: ir.Type) : string {
                 case 'struct':
                     return `${declaration.name}`; // TODO: mangle template args as well
                 case 'alias':
-                    return mangleType(declaration.type); // TODO: mangle template args as well
-                case 'enum': return declaration.name;
+                    return mangleTypeForEncoding(declaration.type); // TODO: mangle template args as well
+                case 'enum':
+                    if (declaration.members.every(m => m.type === "string"))
+                        return `string`;
+                    return 'unknown enum';//throw new Error("enums should not be encoded/decoded except for string enums");
                 case 'typeparameter': return declaration.name; // TODO: what about this?
             }
             console.log(declaration);
             throw new Error("missing type mangler")
-        case 'union': `union${type.types.length}_${type.types.map(mangleType).join("_")}`
-        case 'intersection': `intersection${type.types.length}_${type.types.map(mangleType).join("_")}`
+        case 'union': return `union${type.types.length}_${type.types.map(mangleTypeForEncoding).join("_")}`
+        case 'intersection': return `handle`;
         case 'literalunion': return `literalunion_HASH`; // TODO: do the hash
         case 'mapped': return `mapped_`; // TODO: figure out mapped
-        case 'optional': return `optional_${mangleType(type.baseType)}`;
+        case 'optional': return `optional_${mangleTypeForEncoding(type.baseType)}`;
         case 'function': return `function_`; // TODO: handle functions
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
         case 'literal': throw new Error("Cannot mangle literal types")
-        case 'array': return `array_${mangleType(type.elementType)}`;
+        case 'array': return `array_${mangleTypeForEncoding(type.elementType)}`;
         case 'indexed': return `indexed_`; // TODO: probably should resolve indexed types earlier
+        case 'handle': return `handle`;
+        case 'instantiated': return `handle`;
     }
     console.log(type);
     throw new Error("missing type mangler")
 }
 
 function getTypeEncoderName(type: ir.Type) : string {
-    return `spasm_encode_${mangleType(type)}`;
+    return `spasm_encode_${mangleTypeForEncoding(type)}`;
 }
 
 function getTypeDecoderName(type: ir.Type) : string {
-    return `spasm_decode_${mangleType(type)}`;
+    return `spasm_decode_${mangleTypeForEncoding(type)}`;
 }
 
 function generateResultEncoding(returnType: ir.Type, expression: string) : string {
@@ -196,7 +396,6 @@ function canTypeBeReturned(type: ir.Type) : boolean {
         case 'keyword':
             switch (type.name) {
                 case 'string': return false;
-                case 'number': return true;
                 case 'bool': return true;
                 case 'double': return true;
             }
@@ -207,11 +406,13 @@ function canTypeBeReturned(type: ir.Type) : boolean {
                 case 'struct': return true;
                 case 'alias':
                     return canTypeBeReturned(declaration.type)
-                case 'enum': return false; // TODO: is true when enum is number
+                case 'enum':
+                    return declaration.members.every(m => m.type === "number" || m.type === "enum");
+                case 'typeparameter': return true; // TODO figure this out
             }
             break;
-        case 'union':
-        case 'intersection': // TODO: does intersection always require to be encoded?
+        case 'union': return false;
+        case 'intersection': return true;
         case 'literalunion':
             return false;
         case 'mapped': // TODO: does mapped need to be encoded?
@@ -263,7 +464,9 @@ function structMemberToString(member: ir.StructMember, struct: ir.Struct) : stri
     }
 }
 
-function structToString(struct : ir.Struct) {
+function structToString(struct : ir.Struct) : string {
+    if (struct.templateArguments.length > 0)
+        return null;
     // TODO: handle templates
     let template = struct.templateArguments.map(t => templateParameterToString(t)).join(",")
     return struct.members.map(m => structMemberToString(m, struct)).filter(m => !!m).join(",\n");

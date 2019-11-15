@@ -7,6 +7,8 @@ export type Declaration = Struct | Enum | Alias | Function | TypeParameter | Unk
 
 export type Type = IntersectionType | UnionType | ReferenceType | UnknownType | LiteralType | KeywordType | ArrayType | MappedType | FunctionType | ConditionalType | OptionalType | IndexedType | HandleType | LiteralUnionType | TypePredicate | InstantiatedType;
 
+// TODO: for better error messages and diagnostics we can include the original source text in the types
+
 export interface IntersectionType {
     type: 'intersection'
     types: Type[]
@@ -38,9 +40,11 @@ export interface LiteralType {
     name: string
 }
 
+export type Keyword = "double" | "Any" | "string" | "BigInt" | "bool" | "void" | "null" | "undefined"
+
 export interface KeywordType {
     type: 'keyword'
-    name: string
+    name: Keyword
 }
 
 export interface ArrayType {
@@ -76,6 +80,7 @@ export interface IndexedType {
     type: 'indexed'
     objectType: Type
     indexType: Type
+    map: Map<string, Type>
 }
 
 export interface HandleType {
@@ -158,9 +163,12 @@ export interface UnknownDeclaration {
     declaration: 'unknown'
 }
 
+export type EnumMemberType = "number" | "string" | "enum"
+
 export interface EnumMember {
     name: string
     value: string
+    type: EnumMemberType
 }
 
 function memoize<T>(fun: () => T): () => T {
@@ -205,6 +213,8 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
 
     function getReferencedDeclaration(type: ts.TypeReferenceNode) : () => Declaration {
         const referencedSymbol = typeChecker.getSymbolsInScope(type, ts.SymbolFlags.Type).filter(s => s.name == type.typeName.getText())[0]
+        if (!referencedSymbol)
+            throw new Error(`Cannot find symbol ${type.typeName.getText()}`);
         const declaration = referencedSymbol.declarations[0]
         // TODO: get memoize working...
         // return memoize(() => buildDeclaration(declaration));
@@ -313,9 +323,17 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {type:'unknown'}
             },
             visitIndexedAccessType: (type: ts.IndexedAccessTypeNode) : Type => {
+                const referencedType = (typeChecker.getTypeAtLocation(type));
+                switch (referencedType.flags) {
+                    case ts.TypeFlags.String: return {type: 'keyword', name: 'string'}
+                }
+                if ((referencedType as any).objectType === undefined)
+                    throw new Error(`Unable to evaluate indexed type ${type.getText()} with flag ${referencedType.flags}`);
+                const members = (referencedType as any).objectType.members.entries();
+                const map = new Map(Array.from(members, (entry: [string, ts.Symbol]) => [entry[0], buildType((entry[1].declarations[0] as any).type, false)]));
                 let indexType = buildType(type.objectType, false)
                 let objectType = buildType(type.indexType, false)
-                return {type:'indexed', objectType, indexType}
+                return {type:'indexed', objectType, indexType, map}
             },
             visitTypePredicateNode: (type: ts.TypePredicateNode) : Type => {
                 return {type:'predicate'}
@@ -346,10 +364,23 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
         };
     }
 
+    function getEnumMemberType(member: ts.EnumMember) : EnumMemberType {
+        const flags: ts.TypeFlags = typeChecker.getTypeAtLocation(member.initializer).flags | typeChecker.getTypeAtLocation(member).flags;
+        if (flags & ts.TypeFlags.NumberLiteral)
+            return "number";
+        if (flags & ts.TypeFlags.Enum)
+            return "enum";
+        if (flags & ts.TypeFlags.StringLiteral)
+            return "string";
+        throw new Error(`Unsupported enum member type ${flags}`)
+    }
+
     function buildEnumMember(member: ts.EnumMember) : EnumMember {
+        const type = getEnumMemberType(member);
         return {
             name: member.name.getText(),
-            value: member.initializer.getText()
+            value: member.initializer && member.initializer.getText() || `"${member.name.getText()}"`,
+            type
         }
     }
 
