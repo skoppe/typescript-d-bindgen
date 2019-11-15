@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`intersection 1`] = `""`;
+
+exports[`union-string-handle 1`] = `
+"const spasm_decode_union2_string_HTMLElement: (ptr) => {
+    if (getUInt(ptr) === 0)
+        return spasm_decode_string(ptr+4);
+    if (getUInt(ptr) === 1)
+        return spasm_decode_handle(ptr+4);
+};"
+`;
+
+exports[`union-string-int 1`] = `
+"const spasm_decode_union2_string_double: (ptr) => {
+    if (getUInt(ptr) === 0)
+        return spasm_decode_string(ptr+4);
+    if (getUInt(ptr) === 1)
+        return getDouble(ptr+4);
+};"
+`;
