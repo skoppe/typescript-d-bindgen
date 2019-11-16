@@ -96,6 +96,7 @@ export interface InstantiatedType {
 
 export interface TypePredicate {
     type: 'predicate'
+    targetType: Type
 }
 
 export interface Property {
@@ -129,6 +130,7 @@ export interface Struct {
     baseType?: Struct
     templateArguments: TemplateParameter[]
     members: StructMember[]
+    sourceFile: string
 }
 
 export interface Alias {
@@ -136,12 +138,14 @@ export interface Alias {
     name: string
     templateArguments: TemplateParameter[]
     type: Type
+    sourceFile: string
 }
 
 export interface Enum {
     declaration: 'enum'
     name: string
     members: EnumMember[]
+    sourceFile: string
 }
 
 export interface Function {
@@ -150,6 +154,7 @@ export interface Function {
     templateParameters: TemplateParameter[]
     parameters: Parameter[]
     returnType: Type
+    sourceFile: string
 }
 
 export interface TypeParameter {
@@ -157,10 +162,12 @@ export interface TypeParameter {
     name: string
     constraint: Type | null
     def: Type | null
+    sourceFile: string
 }
 
 export interface UnknownDeclaration {
     declaration: 'unknown'
+    sourceFile: string
 }
 
 export type EnumMemberType = "number" | "string" | "enum"
@@ -187,18 +194,18 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
         },
         visitEnum: (decl: ts.EnumDeclaration) : Declaration | null => {
             const members = decl.members.map(m => buildEnumMember(m));
-            return {declaration: 'enum', name: decl.name.getText(), members}
+            return {declaration: 'enum', name: decl.name.getText(), members, sourceFile: decl.getSourceFile().fileName}
         },
         visitFunctionDeclaration: (decl: ts.FunctionDeclaration) : Declaration | null => {
             const returnType = buildType(decl.type, !!decl.questionToken);
             const templateParameters = buildTemplateParameters(decl.typeParameters)
             const parameters = buildParameters(decl.parameters)
-            return {declaration: 'function', name: decl.name.getText(), returnType, templateParameters, parameters}
+            return {declaration: 'function', name: decl.name.getText(), returnType, templateParameters, parameters, sourceFile: decl.getSourceFile().fileName}
         },
         visitTypeParameterDeclaration: (decl: ts.TypeParameterDeclaration) : Declaration | null => {
             const constraint: Type | null = decl.constraint && buildType(decl.constraint, false)
             const def: Type | null = decl.default && buildType(decl.default, false)
-            return {declaration: 'typeparameter', name: decl.name.getText(), constraint, def}
+            return {declaration: 'typeparameter', name: decl.name.getText(), constraint, def, sourceFile: decl.getSourceFile().fileName}
         },
         visitAliasDeclaration: (decl: ts.TypeAliasDeclaration) : Declaration | null => {
             return buildAliasDeclaration(decl);
@@ -222,6 +229,7 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
     }
 
     function buildDeclaration(declaration: ts.Declaration) : Declaration {
+        declaration.getSourceFile().fileName
         return iterateDeclarations([declaration], visitor)[0]
     }
 
@@ -336,7 +344,8 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 return {type:'indexed', objectType, indexType, map}
             },
             visitTypePredicateNode: (type: ts.TypePredicateNode) : Type => {
-                return {type:'predicate'}
+                const targetType = buildType(type.type, false);
+                return {type:'predicate', targetType}
             }
         }
         const baseType = iterateType<Type>(type, visitor, {type: 'unknown'});
@@ -360,7 +369,8 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
             declaration: 'alias',
             templateArguments,
             name: decl.name.getText(),
-            type
+            type,
+            sourceFile: decl.getSourceFile().fileName
         };
     }
 
@@ -403,6 +413,8 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
         return {declaration: 'struct',
                 name: name,
                 templateArguments: templateArguments,
-                members: members}
+                members: members,
+                sourceFile: decl.getSourceFile().fileName
+               }
     }
 }

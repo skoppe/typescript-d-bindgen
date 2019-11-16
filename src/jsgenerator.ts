@@ -131,8 +131,16 @@ function dedupeNamedTypes(types: NamedType[]) : NamedType[] {
         },[])
 }
 
+function typeNeedsEncodingFunction(type: ir.Type) : boolean {
+    const defaultEncoders = ["spasm_encode_string", "spasm_encode_handle"];
+    if (hasTypeGotHandle(type) || canTypeBeReturned(type))
+        return false;
+    const encoderName = getTypeEncoderName(type);
+    return !defaultEncoders.find(e => e === encoderName);
+}
+
 function getEncoders(types: ir.Type[]) : string {
-    const encoders = dedupeNamedTypes(types.map(type => ({name: getTypeEncoderName(type), type})))
+    const encoders = dedupeNamedTypes(types.filter(typeNeedsEncodingFunction).map(type => ({name: getTypeEncoderName(type), type})))
         .filter(d => !hasTypeGotHandle(d.type) && !canTypeBeReturned(d.type))
         .map(generateEncoder);
 
@@ -141,11 +149,217 @@ function getEncoders(types: ir.Type[]) : string {
     return `const ${encoders};`;
 }
 
-function generateEncoder(type: NamedType) : string {
-    return "todo"
+function getTypeEncoderFunction(type: ir.Type) : string {
+    const bindingType = getBindingType(type);
+    if (bindingType.type === 'keyword') {
+        switch (bindingType.name) {
+            case 'double': return `setDouble`;
+            case 'bool': return `setBool`;
+        }
+    }
+    return getTypeEncoderName(bindingType)
 }
 
-function typeNeedsDecoding(type: ir.Type) : boolean {
+interface IndexedPredicate {
+    index: number
+    type: ir.Type
+    expression: string
+}
+
+interface IndexedType {
+    index: number
+    type: ir.Type
+}
+
+interface LiteralProperty {
+    name: string
+    type: ir.LiteralType | ir.LiteralUnionType
+}
+
+interface CommonInterfaceTypes {
+    literalPropertyName: string
+    types: IndexedType[]
+    literals: (ir.LiteralType | ir.LiteralUnionType)[]
+}
+
+function getLiteralProperties(type: ir.Type) : LiteralProperty[] {
+    if (type.type === 'reference') {
+        const declaration = type.declaration();
+        if (declaration.declaration === 'struct') {
+            return (declaration.members.filter(m => m.memberType === 'property') as ir.Property[]).filter(m => m.type.type === 'literal' || m.type.type === 'literalunion').map(m => ({name: m.name, type: (m.type as ir.LiteralType | ir.LiteralUnionType)}))
+        }
+    }
+    return []
+}
+
+function findInterfacesWithCommonLiteralProperty(types: IndexedType[]) : CommonInterfaceTypes[] {
+    interface Helper {
+        type: IndexedType
+        literalProperties: LiteralProperty[]
+    }
+    const litTypes: Helper[] = types.map(t => ({type: t, literalProperties: getLiteralProperties(t.type)}))
+    for(var i = 0; i < litTypes.length - 1; i++) {
+        const current = litTypes[i];
+        const others = litTypes.slice(i+1);
+        const commonProps : CommonInterfaceTypes[] = current.literalProperties.map(literalProperty => {
+            const commonTypes = others.filter(other => other.literalProperties.some(p => p.name === literalProperty.name));
+            if (commonTypes.length > 0)
+                return { literalPropertyName: literalProperty.name, types: [current.type].concat(commonTypes.map(c => c.type)), literals: [literalProperty.type].concat(commonTypes.map(t => t.literalProperties.find(p => p.name === literalProperty.name).type)) };
+        }).filter(p => !!p)
+        if (commonProps.length > 0)
+            return commonProps;
+    }
+    return [];
+}
+
+function getTypePredicates(type: ir.UnionType, identifier: string) : IndexedPredicate[] {
+    // something there are type predicates in the typings, we can use those to match on the type
+    // for simple type we use simple checks, for types referenced from the std we can use instanceof
+    // from types created from classes we can use instanceof
+    // otherwise we have to determine the defining feature between types
+    const indexedTypes: IndexedType[] = type.types.map((type,index) => ({index, type}));
+    let predicates: IndexedPredicate[] = indexedTypes.map(type => {
+        switch (type.type.type) {
+            case 'keyword': {
+                switch (type.type.name) {
+                    case 'string': return {index: type.index, expression: `((typeof ${identifier} === 'string') || (${identifier} instanceof String))`, type: type.type};
+                    case 'double':
+                        return {index: type.index, expression: `(typeof ${identifier} === 'number')`, type: type.type};
+                        // TODO: probably some are missing...
+                }
+                break;
+            }
+            case 'reference': {
+                const declaration = type.type.declaration();
+                // if declaration comes from the standard library bindings, we assume it is a web host object and can do a simple instanceof
+                if (declaration.sourceFile.indexOf('/node_modules/typescript/lib/') !== -1)
+                    return {index: type.index, expression: `(${identifier} instanceof ${type.type.name})`, type: type.type};
+                // TODO: if is class we can do a instanceof as well (or constructor)
+            }
+        }
+    }).filter(p => !!p);
+    const complexTypes = indexedTypes.filter(i => !predicates.some(p => p.index === i.index));
+    // we can allow one predicate to be missing, but we need to move it to the last of the list
+    if (complexTypes.length < 2) {
+        return predicates.concat(complexTypes.map(t => ({index: t.index, type: t.type, expression: 'true'})));
+    }
+    // first option is to find a common property with a literal type
+    let remainingTypes = complexTypes;
+    while (true) {
+        const commonLiterals = findInterfacesWithCommonLiteralProperty(remainingTypes);
+        if (commonLiterals.length > 0) {
+            const commonLiteral = commonLiterals[0]; // we only check the first, its rare the second one is usefull
+            const additionalPredicates = commonLiteral.types.map((t, idx) => {
+                const literal = commonLiteral.literals[idx];
+                if (literal.type === 'literal')
+                    return {index: t.index, type: t.type, expression: `${identifier}.${commonLiteral.literalPropertyName} === ${literal.name}`};
+                const expression = literal.types.map(t => `${identifier}.${commonLiteral.literalPropertyName} === ${t.name}`).join(" || ");
+                return {index: t.index, type: t.type, expression: `(${expression})`}
+            });
+            if (additionalPredicates.length > 0) {
+                predicates = predicates.concat(additionalPredicates);
+                remainingTypes = remainingTypes.filter(t => !additionalPredicates.some(p => p.index === t.index));
+            }
+        }
+        break;
+    }
+    if (remainingTypes.length > 0) {
+        return predicates.concat(remainingTypes.map(t => ({type: t.type, index: t.index, expression: '<insert manual type predicate>'})))
+    }
+    return predicates;
+}
+
+function generateEncoder(encoder: NamedType) : string {
+    const type = getBindingType(encoder.type);
+    switch (type.type) {
+        case 'predicate': throw new Error("no need to decode predicate type");
+        case 'keyword':
+            // TODO: do Any and BigInt
+            return `${encoder.name} = (ptr, val) => {\n todo keyword ${type.name}\n}`;;
+        case 'reference':
+            const declaration = type.declaration()
+            switch (declaration.declaration) {
+                case 'struct':
+                    return `${declaration.name} = spasm_encode_handle`; // TODO: mangle template args as well
+                case 'alias':
+                    return generateEncoder({name: getTypeEncoderName(type), type: declaration.type}); // TODO: mangle template args as well
+                case 'enum':
+                    if (encoder.name === "spasm_encode_string")
+                        return;
+                    throw new Error("Enums are either passed via int or via string (spasm_encode_string)")
+                case 'typeparameter': return declaration.name; // TODO: what about this?
+            }
+            console.log(declaration);
+            throw new Error("missing type encoder")
+        case 'union': {
+            const predicates = getTypePredicates(type, 'val')
+            const parts = predicates.map(pred => {
+                const type = pred.type;
+                const idx = pred.index;
+                const predicate = pred.expression;
+                return (`if (${predicate}) {\n` +
+                        `        setUInt(ptr, ${idx})\n` +
+                        `        ${getTypeEncoderFunction(type)}(ptr+4, val);\n` +
+                        `    }`);
+            }).join("else ");
+            return (`${encoder.name} = (ptr, val) => {\n`+
+                    `    ${parts}\n`+
+                    `}`)
+        }
+        case 'intersection': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'literalunion': {
+            // TODO: literalunion is probably passed same as enum
+            const values = `const vals = [${type.types.map(type => type.name).join(", ")}];`;
+            return (`${encoder.name} = (ptr, val) => {\n` +
+                    `    ${values};\n` +
+                    `    return vals[ptr];\n` +
+                    `}`);
+        }
+        case 'mapped': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'optional':
+            // TODO: determine size of base type
+            const sizeOfBase = 4;
+            return (`${encoder.name} = (ptr, val) => {\n` +
+                    `    if (setBool(ptr+${sizeOfBase}, isDefined(val)))\n` +
+                    `        ${getTypeEncoderFunction(type.baseType)}(ptr, val);\n` +
+                    `}`);
+        case 'function': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
+        case 'literal': throw new Error("Cannot decode literal types")
+        case 'array': {
+            if (type.elementType.type === 'keyword') {
+                switch (type.elementType.name) {
+                    // case 'number':
+                    case 'double': return (`${encoder.name} = (ptr, val) => {\n` +
+                                           `    const len = val.length;\n` +
+                                           `    const offset = spasm.alloc(len * 8);` +
+                                           `    setUInt(ptr, len);\n` +
+                                           `    setUInt(ptr+4, offset);\n` +
+                                           `    // todo, actually set the floats\n` +
+                                           `}`);
+                }
+            }
+            // TODO: determine size of element type
+            const sizeOfElement = 4;
+            // TODO: if it is a PDO we can proxy it (although we have to somehow prevent the memory from being freed in D)
+            return (`${encoder.name} = (ptr, val) => {\n` +
+                    `    const len = val.length;\n` +
+                    `    const offset = spasm.alloc(len * ${sizeOfElement});` +
+                    `    setUInt(ptr, len);\n` +
+                    `    setUInt(ptr+4, offset);\n` +
+                    `    for(var i = 0; i < len; i++) {\n` +
+                    `        ${getTypeEncoderFunction(type.elementType)}(offset + (i * ${sizeOfElement}), val[i]));\n` +
+                    `    }\n` +
+                    `}`);
+        }
+        case 'indexed': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'instantiated': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+    }
+    console.log(encoder);
+    throw new Error(`missing type encoder for ${type.type}`)
+}
+
+function typeNeedsDecodingFunction(type: ir.Type) : boolean {
     const defaultDecoders = ["spasm_decode_string", "spasm_decode_handle"];
     if (hasTypeGotHandle(type) || canTypeBeReturned(type))
         return false;
@@ -154,7 +368,7 @@ function typeNeedsDecoding(type: ir.Type) : boolean {
 }
 
 export function getDecoders(types: ir.Type[]) : string {
-    const decoders = dedupeNamedTypes(types.filter(typeNeedsDecoding).map(type => ({name: getTypeDecoderName(type), type})))
+    const decoders = dedupeNamedTypes(types.filter(typeNeedsDecodingFunction).map(type => ({name: getTypeDecoderName(type), type})))
         .map(generateDecoder).filter(d => !!d).join(",\n")
 
     if (decoders.length == 0)
