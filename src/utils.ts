@@ -76,18 +76,18 @@ export function getBindingType(type: ir.Type) : ir.Type {
         case 'intersection':
         case 'union': return type;
         case 'literalunion':// TODO: get literal type;
-            return {type: 'keyword', name: 'string'}
+            return {type: 'keyword', name: 'string', fqn: `${type.fqn}.string`}
             // throw new Error("Cannot pass literalunion types across boundary");
         case 'reference':
             const declaration = type.declaration()
             switch (declaration.declaration) {
-                case 'struct': return {type: 'handle'};
+                case 'struct': return {type: 'handle', fqn: 'handle'};
                 case 'alias':
                     if (hasTypeGotHandle(declaration.type))
-                        return {type: 'handle'}
+                        return {type: 'handle', fqn: 'handle'}
                     if (type.templateArguments.length == 0)
                         return type;
-                    return {type:'instantiated', name: type.name, baseType: declaration.type, templateArguments: type.templateArguments}
+                    return {type:'instantiated', name: type.name, baseType: declaration.type, templateArguments: type.templateArguments, fqn: `${type.fqn}.instantiated`}
                 case 'enum': return type;
                 case 'typeparameter': return type;
             }
@@ -102,7 +102,7 @@ export function getBindingType(type: ir.Type) : ir.Type {
         case 'conditional': throw new Error("Cannot pass contional types across boundary")
         case 'optional': return type;
         case 'indexed': return type;//throw new Error("Cannot pass indexed types across boundary")
-        case 'predicate': return {type: 'keyword', name: 'bool'};
+        case 'predicate': return {type: 'keyword', name: 'bool', fqn: type.fqn};
         case 'handle': return type;
     }
     throw new Error(`Cannot get binding type for ${type.type}`);

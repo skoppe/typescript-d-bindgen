@@ -88,7 +88,7 @@ function wrapWithReturnIfNotVoid(returnType: ir.Type, call: string) : string {
 }
 
 function structMemberToString(member: ir.StructMember, struct: ir.Struct) : string {
-    const selfArgument: ir.Argument = {symbol: 'this.handle', type: {type: 'handle'}}
+    const selfArgument: ir.Argument = {symbol: 'this.handle', type: {type: 'handle', fqn: 'handle'}}
     switch(member.memberType) {
         case 'property': {
             if (isLiteralOrUndefinedType(member.type))

@@ -5,23 +5,26 @@ export type TemplateParameter = string
 export type StructMember = Method | Property;
 export type Declaration = Struct | Enum | Alias | Function | TypeParameter | UnknownDeclaration;
 
-export type Type = IntersectionType | UnionType | ReferenceType | UnknownType | LiteralType | KeywordType | ArrayType | MappedType | FunctionType | ConditionalType | OptionalType | IndexedType | HandleType | LiteralUnionType | TypePredicate | InstantiatedType;
+export type Type = IntersectionType | UnionType | ReferenceType | UnknownType | LiteralType | KeywordType | ArrayType | MappedType | FunctionType | ConditionalType | OptionalType | IndexedType | HandleType | LiteralUnionType | TypePredicateType | InstantiatedType;
 
 // TODO: for better error messages and diagnostics we can include the original source text in the types
 
 export interface IntersectionType {
     type: 'intersection'
     types: Type[]
+    fqn: string
 }
 
 export interface UnionType {
     type: 'union'
     types: Type[]
+    fqn: string
 }
 
 export interface LiteralUnionType {
     type: 'literalunion'
     types: LiteralType[]
+    fqn: string
 }
 
 export interface ReferenceType {
@@ -29,15 +32,18 @@ export interface ReferenceType {
     name: string
     templateArguments: Type[]
     declaration: () => Declaration
+    fqn: string
 }
 
 export interface UnknownType {
     type: 'unknown'
+    fqn: string
 }
 
 export interface LiteralType {
     type: 'literal'
     name: string
+    fqn: string
 }
 
 export type Keyword = "double" | "Any" | "string" | "BigInt" | "bool" | "void" | "null" | "undefined"
@@ -45,15 +51,18 @@ export type Keyword = "double" | "Any" | "string" | "BigInt" | "bool" | "void" |
 export interface KeywordType {
     type: 'keyword'
     name: Keyword
+    fqn: string
 }
 
 export interface ArrayType {
     type: 'array'
     elementType: Type
+    fqn: string
 }
 
 export interface MappedType {
     type: 'mapped'
+    fqn: string
 }
 
 export interface FunctionType {
@@ -61,6 +70,7 @@ export interface FunctionType {
     returnType: Type
     templateParameters: TemplateParameter[]
     parameters: Parameter[]
+    fqn: string
 }
 
 export interface ConditionalType {
@@ -69,11 +79,13 @@ export interface ConditionalType {
     extendsType: Type
     trueType: Type
     falseType: Type
+    fqn: string
 }
 
 export interface OptionalType {
     type: 'optional'
     baseType: Type
+    fqn: string
 }
 
 export interface IndexedType {
@@ -81,10 +93,12 @@ export interface IndexedType {
     objectType: Type
     indexType: Type
     map: Map<string, Type>
+    fqn: string
 }
 
 export interface HandleType {
     type: 'handle'
+    fqn: 'handle'
 }
 
 export interface InstantiatedType {
@@ -92,11 +106,13 @@ export interface InstantiatedType {
     name: string
     baseType: Type
     templateArguments: Type[]
+    fqn: string
 }
 
-export interface TypePredicate {
+export interface TypePredicateType {
     type: 'predicate'
     targetType: Type
+    fqn: string
 }
 
 export interface Property {
@@ -249,22 +265,31 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
         return (typeParameters || []).map(typeParameter => typeParameter.name.getText());
     }
 
+    function getFqn(type: ts.TypeNode, fallbackName: string | null = null) : string {
+        const symbol = typeChecker.getTypeFromTypeNode(type).symbol;
+        if (symbol != null && symbol != undefined)
+            return typeChecker.getFullyQualifiedName(symbol);
+
+        if (fallbackName)
+            return `"${type.getSourceFile().fileName}".${fallbackName}`
+        return `"${type.getSourceFile().fileName}":${type.getFullStart()}:${type.getEnd()}`
+    }
     function buildType(type: ts.TypeNode, optional: boolean) : Type {
         const visitor = {
             visitKeywordType: (keyword: ts.KeywordTypeNode): Type => {
                 switch (keyword.kind) {
-                    case ts.SyntaxKind.AnyKeyword: return {type:'keyword', name: 'Any'};
+                    case ts.SyntaxKind.AnyKeyword: return {type:'keyword', name: 'Any', fqn: 'any'};
                     case ts.SyntaxKind.UnknownKeyword: throw new Error("unknown keyword not support");
-                    case ts.SyntaxKind.NumberKeyword: return {type:'keyword', name: 'double'};
-                    case ts.SyntaxKind.BigIntKeyword: return {type:'keyword', name: 'BigInt'};
+                    case ts.SyntaxKind.NumberKeyword: return {type:'keyword', name: 'double', fqn: 'double'};
+                    case ts.SyntaxKind.BigIntKeyword: return {type:'keyword', name: 'BigInt', fqn: 'BigInt'};
                     case ts.SyntaxKind.ObjectKeyword:throw new Error("object keyword not support");
-                    case ts.SyntaxKind.BooleanKeyword: return {type:'keyword', name: 'bool'};
-                    case ts.SyntaxKind.StringKeyword: return {type:'keyword', name: 'string'};
+                    case ts.SyntaxKind.BooleanKeyword: return {type:'keyword', name: 'bool', fqn: 'bool'};
+                    case ts.SyntaxKind.StringKeyword: return {type:'keyword', name: 'string', fqn: 'string'};
                     case ts.SyntaxKind.SymbolKeyword:throw new Error("symbol keyword not support");
                     case ts.SyntaxKind.ThisKeyword:throw new Error("this keyword not support");
-                    case ts.SyntaxKind.VoidKeyword: return {type:'keyword', name: 'void'};
-                    case ts.SyntaxKind.UndefinedKeyword: return {type:'keyword', name: 'undefined'};
-                    case ts.SyntaxKind.NullKeyword: return {type:'keyword', name: 'null'};
+                    case ts.SyntaxKind.VoidKeyword: return {type:'keyword', name: 'void', fqn: 'void'};
+                    case ts.SyntaxKind.UndefinedKeyword: return {type:'keyword', name: 'undefined', fqn: 'undefined'};
+                    case ts.SyntaxKind.NullKeyword: return {type:'keyword', name: 'null', fqn: 'null'};
                     case ts.SyntaxKind.NeverKeyword:throw new Error("never keyword not support");
                 }
                 throw new Error("unknown keyword");
@@ -273,13 +298,13 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 if (union.types.length == 2) {
                     const idx = union.types.findIndex(t => t.kind == ts.SyntaxKind.NullKeyword);
                     if (idx !== -1) {
-                        return {type: 'optional', baseType: buildType(union.types[(idx + 1) % 2], false)}
+                        return {type: 'optional', baseType: buildType(union.types[(idx + 1) % 2], false), fqn: getFqn(union)}
                     }
                 }
-                const types = iterateTypes<Type>(union.types, visitor, {type: 'unknown'})
+                const types = iterateTypes<Type>(union.types, visitor, {type: 'unknown', fqn: 'unknown'})
                 if (types.every(type => type.type === 'literal'))
-                    return {type: 'literalunion', types: types as LiteralType[]}
-                return {type: 'union', types: types}
+                    return {type: 'literalunion', types: types as LiteralType[], fqn: getFqn(union)}
+                return {type: 'union', types: types, fqn: getFqn(union)}
             },
             visitLiteralType: (literal: ts.LiteralTypeNode): Type => {
                 let name: string = "";
@@ -287,53 +312,53 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                     name += `"${literal.getText().slice(1,-1)}"`;
                 } else
                     name += literal.getText();
-                return {type:'literal', name}
+                return {type:'literal', name, fqn: getFqn(literal)}
             },
             visitArrayType: (type: ts.ArrayTypeNode) : Type => {
-                return {type:'array', elementType: buildType(type.elementType, false)}
+                return {type:'array', elementType: buildType(type.elementType, false), fqn: getFqn(type)}
             },
             visitMappedType: (decl: ts.MappedTypeNode) : Type => {
                 // TODO: map to ir
                 // visitor.visitTypeParameterDeclaration(decl.typeParameter);
                 // walkType(decl.type, visitor)
-                return {type:'mapped'}
+                return {type:'mapped', fqn: getFqn(decl)}
             },
             visitTypeReference: (type: ts.TypeReferenceNode) : Type => {
                 const declaration = getReferencedDeclaration(type);
                 const templateArguments = buildTemplateArguments(type.typeArguments)
-                return {type:'reference', name: type.typeName.getText(), templateArguments, declaration}
+                return {type:'reference', name: type.typeName.getText(), templateArguments, declaration, fqn: getFqn(type, type.typeName.getText())}
             },
             visitFunctionType: (decl: ts.FunctionTypeNode) : Type => {
                 const parameters = buildParameters(decl.parameters)
                 const templateParameters = buildTemplateParameters(decl.typeParameters)
-                return {type:'function', returnType: buildType(decl.type, false), parameters, templateParameters}
+                return {type:'function', returnType: buildType(decl.type, false), parameters, templateParameters, fqn: getFqn(decl)}
             },
             visitIntersectionType: (decl: ts.IntersectionTypeNode) : Type => {
-                return {type:'intersection', types: iterateTypes(decl.types, visitor, {type: 'unknown'})}
+                return {type:'intersection', types: iterateTypes(decl.types, visitor, {type: 'unknown', fqn: 'unknown'}), fqn: getFqn(decl)}
             },
             visitParenthesizedType: (decl: ts.ParenthesizedTypeNode) : Type => {
-                return iterateType(decl.type, visitor, {type: 'unknown'})
+                return iterateType(decl.type, visitor, {type: 'unknown', fqn: 'unknown'})
             },
             visitTypeOperator: (decl: ts.TypeOperatorNode) : Type => {
                 // TODO: map to ir
                 // walkType(decl.type, visitor)
-                return {type:'unknown'}
+                return {type:'unknown', fqn: 'unknown'}
             },
             visitConditionalType: (type: ts.ConditionalTypeNode) : Type => {
                 let checkType = buildType(type.checkType, false)
                 let extendsType = buildType(type.extendsType, false)
                 let trueType = buildType(type.trueType, false)
                 let falseType = buildType(type.falseType, false)
-                return {type:'conditional', checkType, extendsType, trueType, falseType}
+                return {type:'conditional', checkType, extendsType, trueType, falseType, fqn: getFqn(type)}
             },
             visitTypeLiteral: (type: ts.TypeLiteralNode) : Type => {
                 // walkDeclarations(type.members, visitor)
-                return {type:'unknown'}
+                return {type:'unknown', fqn: 'unknown'}
             },
             visitIndexedAccessType: (type: ts.IndexedAccessTypeNode) : Type => {
                 const referencedType = (typeChecker.getTypeAtLocation(type));
                 switch (referencedType.flags) {
-                    case ts.TypeFlags.String: return {type: 'keyword', name: 'string'}
+                    case ts.TypeFlags.String: return {type: 'keyword', name: 'string', fqn: getFqn(type)}
                 }
                 if ((referencedType as any).objectType === undefined)
                     throw new Error(`Unable to evaluate indexed type ${type.getText()} with flag ${referencedType.flags}`);
@@ -341,16 +366,16 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                 const map = new Map(Array.from(members, (entry: [string, ts.Symbol]) => [entry[0], buildType((entry[1].declarations[0] as any).type, false)]));
                 let indexType = buildType(type.objectType, false)
                 let objectType = buildType(type.indexType, false)
-                return {type:'indexed', objectType, indexType, map}
+                return {type:'indexed', objectType, indexType, map, fqn: getFqn(type)}
             },
             visitTypePredicateNode: (type: ts.TypePredicateNode) : Type => {
                 const targetType = buildType(type.type, false);
-                return {type:'predicate', targetType}
+                return {type:'predicate', targetType, fqn: targetType.fqn}
             }
         }
-        const baseType = iterateType<Type>(type, visitor, {type: 'unknown'});
+        const baseType = iterateType<Type>(type, visitor, {type: 'unknown', fqn: 'unknown'});
         if (optional)
-            return {type: 'optional', baseType}
+            return {type: 'optional', baseType, fqn: baseType.fqn}
         return baseType
     }
 

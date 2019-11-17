@@ -49,8 +49,10 @@ const setBool = (ptr, val) => (memory.heapi32u[ptr/4] = +val),
   spasm_decode_handle = decode_handle,
   spasm_decode_sequence = decode_handle;
 `;
+    const typePredicates = extractTypePredicatesFromDeclarations(declarations);
+    console.log(typePredicates)
     const types = extractTypesFromDeclarations(declarations);
-    const encoders = getEncoders(types.encoders);
+    const encoders = getEncoders(types.encoders, typePredicates);
     const decoders = getDecoders(types.decoders);
     // console.log(decoders);
     // throw new Error("break");
@@ -68,6 +70,22 @@ const setBool = (ptr, val) => (memory.heapi32u[ptr/4] = +val),
 interface TypeInterfaces {
     encoders: ir.Type[]
     decoders: ir.Type[]
+}
+
+interface TypePredicate {
+    queryType: ir.Type
+    resultType: ir.Type
+    functionName: string
+}
+
+function extractTypePredicatesFromDeclarations(declarations: ir.Declaration[]) : TypePredicate[] {
+    return declarations.map(declaration => {
+        switch (declaration.declaration) {
+            case 'function':
+                if (declaration.returnType.type === 'predicate')
+                    return {functionName: declaration.name, queryType: declaration.parameters[0].type, resultType: declaration.returnType}
+        }
+    }).filter(d => !!d)
 }
 
 function extractTypesFromFunction(func: ir.Function) : TypeInterfaces {
@@ -139,10 +157,10 @@ function typeNeedsEncodingFunction(type: ir.Type) : boolean {
     return !defaultEncoders.find(e => e === encoderName);
 }
 
-function getEncoders(types: ir.Type[]) : string {
+function getEncoders(types: ir.Type[], typePredicates: TypePredicate[]) : string {
     const encoders = dedupeNamedTypes(types.filter(typeNeedsEncodingFunction).map(type => ({name: getTypeEncoderName(type), type})))
         .filter(d => !hasTypeGotHandle(d.type) && !canTypeBeReturned(d.type))
-        .map(generateEncoder);
+        .map(d => generateEncoder(d, typePredicates));
 
     if (encoders.length == 0)
         return '';
@@ -212,7 +230,7 @@ function findInterfacesWithCommonLiteralProperty(types: IndexedType[]) : CommonI
     return [];
 }
 
-function getTypePredicates(type: ir.UnionType, identifier: string) : IndexedPredicate[] {
+function getTypePredicates(type: ir.UnionType, identifier: string, typePredicates: TypePredicate[]) : IndexedPredicate[] {
     // something there are type predicates in the typings, we can use those to match on the type
     // for simple type we use simple checks, for types referenced from the std we can use instanceof
     // from types created from classes we can use instanceof
@@ -238,13 +256,9 @@ function getTypePredicates(type: ir.UnionType, identifier: string) : IndexedPred
             }
         }
     }).filter(p => !!p);
-    const complexTypes = indexedTypes.filter(i => !predicates.some(p => p.index === i.index));
-    // we can allow one predicate to be missing, but we need to move it to the last of the list
-    if (complexTypes.length < 2) {
-        return predicates.concat(complexTypes.map(t => ({index: t.index, type: t.type, expression: 'true'})));
-    }
-    // first option is to find a common property with a literal type
-    let remainingTypes = complexTypes;
+    let remainingTypes = indexedTypes.filter(i => !predicates.some(p => p.index === i.index));
+
+    // first option is to find interfaces that have a common property with a literal type
     while (true) {
         const commonLiterals = findInterfacesWithCommonLiteralProperty(remainingTypes);
         if (commonLiterals.length > 0) {
@@ -263,13 +277,25 @@ function getTypePredicates(type: ir.UnionType, identifier: string) : IndexedPred
         }
         break;
     }
+    // then look at type predicates from the code
+    remainingTypes = remainingTypes.filter(t => {
+        const predicate = typePredicates.find(predicate => predicate.resultType.fqn === t.type.fqn);
+        if (!predicate)
+            return true; // found no predicate, so we keep it
+        predicates.push({index: t.index, type: t.type, expression: `${predicate.functionName}(${identifier})`})
+    })
+    // we can allow one predicate to be missing, but we need to move it to the last of the list
+    if (remainingTypes.length < 2) {
+        return predicates.concat(remainingTypes.map(t => ({index: t.index, type: t.type, expression: 'true'})));
+    }
+
     if (remainingTypes.length > 0) {
         return predicates.concat(remainingTypes.map(t => ({type: t.type, index: t.index, expression: '<insert manual type predicate>'})))
     }
     return predicates;
 }
 
-function generateEncoder(encoder: NamedType) : string {
+function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : string {
     const type = getBindingType(encoder.type);
     switch (type.type) {
         case 'predicate': throw new Error("no need to decode predicate type");
@@ -282,7 +308,7 @@ function generateEncoder(encoder: NamedType) : string {
                 case 'struct':
                     return `${declaration.name} = spasm_encode_handle`; // TODO: mangle template args as well
                 case 'alias':
-                    return generateEncoder({name: getTypeEncoderName(type), type: declaration.type}); // TODO: mangle template args as well
+                    return generateEncoder({name: getTypeEncoderName(type), type: declaration.type}, typePredicates); // TODO: mangle template args as well
                 case 'enum':
                     if (encoder.name === "spasm_encode_string")
                         return;
@@ -292,7 +318,7 @@ function generateEncoder(encoder: NamedType) : string {
             console.log(declaration);
             throw new Error("missing type encoder")
         case 'union': {
-            const predicates = getTypePredicates(type, 'val')
+            const predicates = getTypePredicates(type, 'val', typePredicates)
             const parts = predicates.map(pred => {
                 const type = pred.type;
                 const idx = pred.index;
@@ -641,7 +667,7 @@ function canTypeBeReturned(type: ir.Type) : boolean {
 }
 
 function structMemberToString(member: ir.StructMember, struct: ir.Struct) : string {
-    const selfParameter: ir.Parameter = {name: 'ctx', type: {type: 'handle'}}
+    const selfParameter: ir.Parameter = {name: 'ctx', type: {type: 'handle', fqn: 'handle'}}
     switch(member.memberType) {
         case 'property': {
             if (isLiteralOrUndefinedType(member.type))

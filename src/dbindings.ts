@@ -57,7 +57,7 @@ function parameterToString(param: ir.Parameter) : string {
 }
 
 function structMemberToString(member: ir.StructMember, struct: ir.Struct) : string {
-    const selfParameter: ir.Parameter = {name: 'self', type: {type: 'handle'}}
+    const selfParameter: ir.Parameter = {name: 'self', type: {type: 'handle', fqn: 'handle'}}
     switch(member.memberType) {
         case 'property': {
             if (isLiteralOrUndefinedType(member.type))
