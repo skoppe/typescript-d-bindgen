@@ -567,7 +567,7 @@ function mangleTypeForEncoding(type: ir.Type) : string {
             if (type.baseType !== 'string')
                 throw new Error("Error: only literalunion of strings needs to be encoded/decoded");
             return `string`;
-        case 'mapped': return `mapped_`; // TODO: figure out mapped
+        case 'mapped': return `handle`;
         case 'optional': return `optional_${mangleTypeForEncoding(type.baseType)}`;
         case 'function': return `function_`; // TODO: handle functions
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
