@@ -75,9 +75,11 @@ export function getBindingType(type: ir.Type) : ir.Type {
     switch (type.type) {
         case 'intersection':
         case 'union': return type;
-        case 'literalunion':// TODO: get literal type;
-            return {type: 'keyword', name: 'string', fqn: `${type.fqn}.string`}
-            // throw new Error("Cannot pass literalunion types across boundary");
+        case 'literalunion': return {
+            type: 'keyword',
+            fqn: type.baseType as string,
+            name: type.baseType as ir.Keyword
+        }
         case 'reference':
             const declaration = type.declaration()
             switch (declaration.declaration) {
@@ -178,4 +180,12 @@ export function getDeclarations(file: TestFile): ir.Declaration[] {
     const program = ts.createProgram([file].map(file => file.name), options, host);
     const sourceFile = program.getSourceFile(file.name);
     return iterateDeclarations([sourceFile], ir.irVisitor("args.package", program.getTypeChecker()))
+}
+
+export function getSafeIdentifier(identifier: string) : string {
+    return identifier.replace(/[^a-zA-Z0-9]/g,"_").replace(/^[^a-zA-Z]/,"_")
+}
+
+export function fromSingleToDoubleQuoted(singleQuoted: string) : string {
+    return singleQuoted.replace('"','\"').replace(/(\\')/g,'\\"');
 }

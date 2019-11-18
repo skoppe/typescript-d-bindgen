@@ -1,5 +1,6 @@
 import * as ts from 'typescript';
 import {Visitor, iterateDeclarations, iterateTypes, iterateType} from './visitor'
+import {fromSingleToDoubleQuoted} from './utils'
 
 export type TemplateParameter = string
 export type StructMember = Method | Property;
@@ -25,6 +26,7 @@ export interface LiteralUnionType {
     type: 'literalunion'
     types: LiteralType[]
     fqn: string
+    baseType: "string" | "number" | "bool"
 }
 
 export interface ReferenceType {
@@ -44,6 +46,7 @@ export interface LiteralType {
     type: 'literal'
     name: string
     fqn: string
+    baseType: "string" | "number" | "bool"
 }
 
 export type Keyword = "double" | "Any" | "string" | "BigInt" | "bool" | "void" | "null" | "undefined"
@@ -302,17 +305,23 @@ export function irVisitor(moduleName: string, typeChecker: ts.TypeChecker) : Vis
                     }
                 }
                 const types = iterateTypes<Type>(union.types, visitor, {type: 'unknown', fqn: 'unknown'})
-                if (types.every(type => type.type === 'literal'))
-                    return {type: 'literalunion', types: types as LiteralType[], fqn: getFqn(union)}
+                if (types.every(type => type.type === 'literal')) {
+                    const literalTypes = types as LiteralType[];
+                    if (literalTypes.some(t => t.baseType !== literalTypes[0].baseType))
+                        throw new Error("Mixing of literal types is not supported");
+                    return {type: 'literalunion', types: literalTypes, fqn: getFqn(union), baseType: literalTypes[0].baseType}
+                }
                 return {type: 'union', types: types, fqn: getFqn(union)}
             },
             visitLiteralType: (literal: ts.LiteralTypeNode): Type => {
-                let name: string = "";
                 if (ts.isStringLiteral(literal.literal)) {
-                    name += `"${literal.getText().slice(1,-1)}"`;
-                } else
-                    name += literal.getText();
-                return {type:'literal', name, fqn: getFqn(literal)}
+                    return {type:'literal', name: `"${fromSingleToDoubleQuoted(literal.getText().slice(1,-1))}"`, fqn: getFqn(literal), baseType: 'string'}
+                } else if (ts.isNumericLiteral(literal.literal))
+                    return {type:'literal', name: literal.getText(), fqn: getFqn(literal), baseType: 'number'}
+                else if (literal.literal.kind === ts.SyntaxKind.TrueKeyword || literal.literal.kind === ts.SyntaxKind.FalseKeyword)
+                    return {type:'literal', name: literal.getText(), fqn: getFqn(literal), baseType: 'bool'}
+                else
+                    throw new Error(`Literal ${literal.literal} is currently not supported`);
             },
             visitArrayType: (type: ts.ArrayTypeNode) : Type => {
                 return {type:'array', elementType: buildType(type.elementType, false), fqn: getFqn(type)}

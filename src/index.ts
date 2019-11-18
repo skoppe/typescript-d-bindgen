@@ -2,6 +2,7 @@ import * as ts from 'typescript';
 import 'source-map-support/register'
 import generateDCode from './dgenerator';
 import generateJsCode from './jsgenerator';
+import { getSafeIdentifier } from './utils';
 import { irVisitor } from './ir';
 import { iterateDeclarations } from './visitor';
 import * as minimist from 'minimist';
@@ -33,7 +34,7 @@ function main(args: minimist.ParsedArgs) {
     const sourceFile = program.getSourceFile(bindingsFile);
     const declarations = iterateDeclarations([sourceFile], irVisitor("args.package", program.getTypeChecker()))
 
-    const safePackageName = args.package.replace(/[^a-zA-Z0-9]/g,"_").replace(/^[^a-zA-Z]/,"_")
+    const safePackageName = getSafeIdentifier(args.package);
     const jsTargetDir = './spasm/modules';
     const dTargetDir = './source/spasm/bindings';
     fs.mkdirSync(jsTargetDir, { recursive: true });
