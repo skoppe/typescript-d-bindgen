@@ -737,7 +737,7 @@ function structMemberToString(member: ir.StructMember, struct: ir.Struct) : stri
             const mangledName = mangleMethod(struct, member, bindingArguments, FunctionKind.nomangle);
             const call = `objects[ctx].${member.name}(${member.parameters.map(generateSourceDecoding)})`;
             const expression = generateResultEncoding(member.returnType, call)
-            return (`    ${mangledName}: (${parameters}) => {\n`+
+            return (`    ${mangledName}: (ctx, ${parameters}) => {\n`+
                     `        ${expression};\n`+
                     `    }`);
     }
