@@ -11,7 +11,8 @@ Generate D bindings to typescript, useful when targeting the web.
 - [x] generate D binding functions
 - [x] generate JS glue code
 - [x] output files
-- [ ] write encode and decode js functions
+- [x] write encode and decode js functions
+- [ ] encode and decode functions
 - [ ] write typescript interop helper templates
 - [ ] integrate with [Spasm bindings](https://github.com/skoppe/spasm)
 - [ ] CI/tests

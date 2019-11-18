@@ -16,6 +16,7 @@ export function hasTypeGotHandle(type: ir.Type) : boolean {
                 case 'typeparameter': return false; // TODO: how did this got here?
             }
             throw new Error(`unknown declaration ${declaration.declaration}`)
+        case 'instantiated': return true;
         case 'array':
         case 'function': return false;
         case 'optional': return false;
@@ -89,7 +90,7 @@ export function getBindingType(type: ir.Type) : ir.Type {
                         return {type: 'handle', fqn: 'handle'}
                     if (type.templateArguments.length == 0)
                         return type;
-                    return {type:'instantiated', name: type.name, baseType: declaration.type, templateArguments: type.templateArguments, fqn: `${type.fqn}.instantiated`}
+                    return {type:'instantiated', name: type.name, baseType: declaration.type, templateArguments: type.templateArguments, fqn: `${type.fqn}<${type.templateArguments.map(t => t.fqn).join(",")}>`}
                 case 'enum': return type;
                 case 'typeparameter': return type;
             }
@@ -99,7 +100,7 @@ export function getBindingType(type: ir.Type) : ir.Type {
         case 'literal': return type;
         case 'keyword': return type;
         case 'array': return type;
-        case 'mapped': throw new Error("Cannot pass mapped types across boundary");
+        case 'mapped': return {type: 'handle', fqn: 'handle'}
         case 'function': return type;
         case 'conditional': throw new Error("Cannot pass contional types across boundary")
         case 'optional': return type;

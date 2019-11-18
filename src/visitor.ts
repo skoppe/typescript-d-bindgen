@@ -94,8 +94,9 @@ export function iterateType<T>(type: ts.TypeNode, v: Visitor<T>, def: T = undefi
         return v.visitConditionalType(type as ts.ConditionalTypeNode)
     else if (ts.isTypePredicateNode(type))
         return v.visitTypePredicateNode(type as ts.TypePredicateNode)
-    else
-        console.log("no type visitor for kind", type.kind);
+    else if (type.kind !== ts.SyntaxKind.ThisType) {
+        throw new Error(`no type visitor for kind ${type.kind} in file ${type.getSourceFile().fileName}`)
+    }
     return def;
 }
 

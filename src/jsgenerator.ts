@@ -188,21 +188,28 @@ interface IndexedType {
 
 interface LiteralProperty {
     name: string
-    type: ir.LiteralType | ir.LiteralUnionType
+    type: ir.LiteralType | ir.LiteralUnionType | ir.OptionalType
 }
 
 interface CommonInterfaceTypes {
     literalPropertyName: string
     types: IndexedType[]
-    literals: (ir.LiteralType | ir.LiteralUnionType)[]
+    literals: (ir.LiteralType | ir.LiteralUnionType | ir.OptionalType)[]
 }
 
 function getLiteralProperties(type: ir.Type) : LiteralProperty[] {
     if (type.type === 'reference') {
         const declaration = type.declaration();
         if (declaration.declaration === 'struct') {
-            return (declaration.members.filter(m => m.memberType === 'property') as ir.Property[]).filter(m => m.type.type === 'literal' || m.type.type === 'literalunion').map(m => ({name: m.name, type: (m.type as ir.LiteralType | ir.LiteralUnionType)}))
+            const properties = (declaration.members.filter(m => m.memberType === 'property') as ir.Property[])
+            return properties
+                .filter(m => m.type.type === 'literal' || m.type.type === 'literalunion' || (m.type.type === 'optional' && (m.type.baseType.type === 'literal' || m.type.baseType.type === 'literalunion')))
+                .map(m => ({name: m.name, type: (m.type as ir.LiteralType | ir.LiteralUnionType | ir.OptionalType)}))
         }
+    } else if (type.type === 'intersection') {
+        return type.types.map(getLiteralProperties).reduce((acc,item)=>acc.concat(item));
+    } else {
+        console.warn("cant get literal properties from type", type)
     }
     return []
 }
@@ -225,6 +232,20 @@ function findInterfacesWithCommonLiteralProperty(types: IndexedType[]) : CommonI
             return commonProps;
     }
     return [];
+}
+
+function getInterfaceLiteralTypeGuard(literal: ir.LiteralType | ir.LiteralUnionType | ir.OptionalType, propertyName: string, identifier: string): string {
+    if (literal.type === 'literal')
+        return `${identifier}.${propertyName} === ${literal.name}`;
+    if (literal.type === 'literalunion') {
+        const expression = literal.types.map(t => `${identifier}.${propertyName} === ${t.name}`).join(" || ");
+        return `(${expression})`
+    }
+    if (literal.type === 'optional') {
+        if (literal.baseType.type === 'literal' || literal.baseType.type === 'literalunion')
+            return `${getInterfaceLiteralTypeGuard(literal.baseType, propertyName, identifier)} || ${identifier}.${propertyName} == undefined`;
+        throw new Error(`Unable to get literal typeguard of type ${literal.baseType.type}`)
+    }
 }
 
 function getTypePredicates(type: ir.UnionType, identifier: string, typePredicates: TypePredicate[]) : IndexedPredicate[] {
@@ -256,16 +277,14 @@ function getTypePredicates(type: ir.UnionType, identifier: string, typePredicate
     let remainingTypes = indexedTypes.filter(i => !predicates.some(p => p.index === i.index));
 
     // first option is to find interfaces that have a common property with a literal type
-    while (true) {
+    while (remainingTypes.length > 0) {
         const commonLiterals = findInterfacesWithCommonLiteralProperty(remainingTypes);
         if (commonLiterals.length > 0) {
             const commonLiteral = commonLiterals[0]; // we only check the first, its rare the second one is usefull
             const additionalPredicates = commonLiteral.types.map((t, idx) => {
                 const literal = commonLiteral.literals[idx];
-                if (literal.type === 'literal')
-                    return {index: t.index, type: t.type, expression: `${identifier}.${commonLiteral.literalPropertyName} === ${literal.name}`};
-                const expression = literal.types.map(t => `${identifier}.${commonLiteral.literalPropertyName} === ${t.name}`).join(" || ");
-                return {index: t.index, type: t.type, expression: `(${expression})`}
+                const expression = getInterfaceLiteralTypeGuard(literal, commonLiteral.literalPropertyName, identifier);
+                return {index: t.index, type: t.type, expression};
             });
             if (additionalPredicates.length > 0) {
                 predicates = predicates.concat(additionalPredicates);
@@ -312,7 +331,7 @@ function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : 
                     throw new Error("Enums are either passed via int or via string (spasm_encode_string)")
                 case 'typeparameter': return declaration.name; // TODO: what about this?
             }
-            console.log(declaration);
+            console.warn(declaration);
             throw new Error("missing type encoder")
         case 'union': {
             const predicates = getTypePredicates(type, 'val', typePredicates)
@@ -329,7 +348,7 @@ function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : 
                     `    ${parts}\n`+
                     `}`)
         }
-        case 'intersection': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'intersection': return `${encoder.name} = (ptr, val) => {\n todo intersection\n}`;
         case 'literalunion': {
             // TODO: literalunion is probably passed same as enum
             const values = `const vals = [${type.types.map(type => type.name).join(", ")}];`;
@@ -338,7 +357,7 @@ function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : 
                     `    return vals[ptr];\n` +
                     `}`);
         }
-        case 'mapped': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'mapped': return `${encoder.name} = (ptr, val) => {\n todo mapped\n}`;
         case 'optional':
             // TODO: determine size of base type
             const sizeOfBase = 4;
@@ -346,7 +365,7 @@ function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : 
                     `    if (setBool(ptr+${sizeOfBase}, isDefined(val)))\n` +
                     `        ${getTypeEncoderFunction(type.baseType)}(ptr, val);\n` +
                     `}`);
-        case 'function': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'function': return `${encoder.name} = (ptr, val) => {\n todo function\n}`;
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
         case 'literal': throw new Error("Cannot decode literal types")
         case 'array': {
@@ -375,10 +394,11 @@ function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : 
                     `    }\n` +
                     `}`);
         }
-        case 'indexed': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
-        case 'instantiated': return `${encoder.name} = (ptr, val) => {\n todo\n}`;
+        case 'indexed': return `${encoder.name} = (ptr, val) => {\n todo indexed\n}`;
+        case 'instantiated':
+            return generateEncoder({name: encoder.name, type: type.baseType}, typePredicates)
     }
-    console.log(encoder);
+    console.warn(encoder);
     throw new Error(`missing type encoder for ${type.type}`)
 }
 
@@ -430,7 +450,7 @@ function generateDecoder(decoder: NamedType) : string {
                     throw new Error("Enums are either passed via int or via string (spasm_decode_string)")
                 case 'typeparameter': return declaration.name; // TODO: what about this?
             }
-            console.log(declaration);
+            console.warn(declaration);
             throw new Error("missing type decoder")
         case 'union': {
             const parts = type.types.map(getBindingType).map((type, idx) => {
@@ -488,9 +508,11 @@ function generateDecoder(decoder: NamedType) : string {
                     `}`);
         }
         case 'indexed': return `${decoder.name} = (ptr) => {\n todo\n}`;
-        case 'instantiated': return `${decoder.name} = (ptr) => {\n todo\n}`;
+        case 'instantiated': return (`${decoder.name} = (ptr) => {\n` +
+                                     `    return ${getTypeDecoderFunction(type.baseType)}(ptr);` +
+                                     `\n}`)
     }
-    console.log(decoder);
+    console.warn(decoder);
     throw new Error(`missing type decoder for ${type.type}`)
 }
 
@@ -525,7 +547,10 @@ function decodeParameter(param: ir.Parameter) : string {
     const decoder = getTypeDecoderName(param.type);
     switch (param.type.type) {
         case 'array': return `${decoder}(${param.name}Len, ${param.name}Off)`
-        case 'optional': return `(${param.name}Defined ? ${param.name} : undefined)`
+        case 'optional':
+            if (typeNeedsDecodingFunction(param.type))
+                return `(${param.name}Defined ? ${getTypeDecoderFunction(param.type.baseType)}(${param.name}) : undefined)`
+            return `(${param.name}Defined ? ${param.name} : undefined)`
     }
     return `${decoder}(${param.name})`;
 }
@@ -536,8 +561,50 @@ function generateFunctionParameterNames(returnType: ir.Type, params: ir.Paramete
     return ['rawResult'].concat(params.map(parameterToString));
 }
 
-function getLiteralUnionHash(type: ir.LiteralUnionType) : string {
-    return type.types.map(t => `_${t.name}`).map(getSafeIdentifier).join("")
+function mangleTypeForDecoding(type: ir.Type) : string {
+    // TODO: primitive types like int/float are simple as well
+    switch (type.type) {
+        case 'predicate': return 'predicate';
+        case 'keyword':
+            return type.name;
+        case 'reference':
+            const declaration = type.declaration()
+            switch (declaration.declaration) {
+                case 'struct':
+                    return `handle`; // TODO: mangle template args as well
+                case 'alias':
+                    return mangleTypeForDecoding(getBindingType(declaration.type)); // TODO: mangle template args as well
+                case 'enum':
+                    if (declaration.members.every(m => m.type === "string"))
+                        return `string`;
+                    return 'unknown enum';//throw new Error("enums should not be encoded/decoded except for string enums");
+                case 'typeparameter': return declaration.name; // TODO: what about this?
+            }
+            console.warn(declaration);
+            throw new Error("missing type mangler")
+        case 'union': return `union${type.types.length}_${type.types.map(mangleTypeForDecoding).join("_")}`
+        case 'intersection': return `handle`;
+        case 'literalunion':
+            if (type.baseType !== 'string')
+                throw new Error("Error: only literalunion of strings needs to be encoded/decoded");
+            return `string`;
+        case 'mapped': return `handle`;
+        case 'optional': return `optional_${mangleTypeForDecoding(type.baseType)}`;
+        case 'function': return `function_`; // TODO: handle functions
+        case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
+        case 'literal': return getSafeIdentifier(type.name.replace("\"",""))
+        case 'array': return `array_${mangleTypeForDecoding(type.elementType)}`;
+        case 'indexed': return `indexed_`; // TODO: probably should resolve indexed types earlier
+        case 'handle': return `handle`;
+        case 'instantiated':
+            return mangleTypeForDecoding(type.baseType);
+    }
+    console.warn(type);
+    throw new Error("missing type mangler")
+}
+
+function getTypeDecoderName(type: ir.Type) : string {
+    return `spasm_decode_${mangleTypeForDecoding(type)}`;
 }
 
 function mangleTypeForEncoding(type: ir.Type) : string {
@@ -550,16 +617,16 @@ function mangleTypeForEncoding(type: ir.Type) : string {
             const declaration = type.declaration()
             switch (declaration.declaration) {
                 case 'struct':
-                    return `${declaration.name}`; // TODO: mangle template args as well
+                    return type.name; // TODO: mangle template args as well
                 case 'alias':
-                    return mangleTypeForEncoding(declaration.type); // TODO: mangle template args as well
+                    return mangleTypeForEncoding(getBindingType(declaration.type)); // TODO: mangle template args as well
                 case 'enum':
                     if (declaration.members.every(m => m.type === "string"))
                         return `string`;
                     return 'unknown enum';//throw new Error("enums should not be encoded/decoded except for string enums");
                 case 'typeparameter': return declaration.name; // TODO: what about this?
             }
-            console.log(declaration);
+            console.warn(declaration);
             throw new Error("missing type mangler")
         case 'union': return `union${type.types.length}_${type.types.map(mangleTypeForEncoding).join("_")}`
         case 'intersection': return `handle`;
@@ -571,22 +638,19 @@ function mangleTypeForEncoding(type: ir.Type) : string {
         case 'optional': return `optional_${mangleTypeForEncoding(type.baseType)}`;
         case 'function': return `function_`; // TODO: handle functions
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
-        case 'literal': throw new Error("Cannot mangle literal types")
+        case 'literal': return getSafeIdentifier(type.name.replace("\"",""))
         case 'array': return `array_${mangleTypeForEncoding(type.elementType)}`;
         case 'indexed': return `indexed_`; // TODO: probably should resolve indexed types earlier
         case 'handle': return `handle`;
-        case 'instantiated': return `handle`;
+        case 'instantiated':
+            return `${type.name}_instantiated${type.templateArguments.length}_${type.templateArguments.map(mangleTypeForEncoding).join("_")}`;
     }
-    console.log(type);
+    console.warn(type);
     throw new Error("missing type mangler")
 }
 
 function getTypeEncoderName(type: ir.Type) : string {
     return `spasm_encode_${mangleTypeForEncoding(type)}`;
-}
-
-function getTypeDecoderName(type: ir.Type) : string {
-    return `spasm_decode_${mangleTypeForEncoding(type)}`;
 }
 
 function generateResultEncoding(returnType: ir.Type, expression: string) : string {
@@ -637,7 +701,7 @@ function canTypeBeReturned(type: ir.Type) : boolean {
         case 'array': return false;
         case 'indexed': return true; // TODO: can it be returned?
     }
-    console.log(type);
+    console.warn(type);
     throw new Error("missing case for canTypeBeReturned")
 }
 
