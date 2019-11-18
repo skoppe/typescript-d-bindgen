@@ -28,6 +28,7 @@ function main(args: minimist.ParsedArgs) {
         throw new Error(`Bindings file ${bindingsFile} of package ${args.package} does not exist`);
     }
 
+    console.log(`Parsing ${bindingsFile} file`)
     const compilerOptions = {} as ts.CompilerOptions;
     const compilerHost: ts.CompilerHost = ts.createCompilerHost(compilerOptions);
     const program: ts.Program = ts.createProgram([bindingsFile], compilerOptions, compilerHost);
@@ -40,8 +41,12 @@ function main(args: minimist.ParsedArgs) {
     fs.mkdirSync(jsTargetDir, { recursive: true });
     fs.mkdirSync(dTargetDir, { recursive: true });
 
-    fs.writeFileSync(`${jsTargetDir}/${safePackageName}.js`, generateJsCode(declarations, safePackageName));
-    fs.writeFileSync(`${dTargetDir}/${safePackageName}.d`, generateDCode(declarations, safePackageName));
+    const jsOutputFile = `${jsTargetDir}/${safePackageName}.js`;
+    const dOutputFile = `${dTargetDir}/${safePackageName}.d`;
+    console.log(`Writing JavaScript glue code to ${jsOutputFile}`);
+    fs.writeFileSync(jsOutputFile, generateJsCode(declarations, safePackageName));
+    console.log(`Writing D bindings code to ${dOutputFile}`);
+    fs.writeFileSync(dOutputFile, generateDCode(declarations, safePackageName));
 }
 
 main(minimist(process.argv.slice(2)));

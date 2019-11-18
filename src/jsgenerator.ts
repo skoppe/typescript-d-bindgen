@@ -365,7 +365,7 @@ function generateEncoder(encoder: NamedType, typePredicates: TypePredicate[]) : 
                     `    if (setBool(ptr+${sizeOfBase}, isDefined(val)))\n` +
                     `        ${getTypeEncoderFunction(type.baseType)}(ptr, val);\n` +
                     `}`);
-        case 'function': return `${encoder.name} = (ptr, val) => {\n todo function\n}`;
+        case 'function': return `${encoder.name} = (ptr, val) => {\n // TODO: implement encoder for function\n}`;
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
         case 'literal': throw new Error("Cannot decode literal types")
         case 'array': {
@@ -477,7 +477,7 @@ function generateDecoder(decoder: NamedType) : string {
                     `    if (getBool(ptr+${sizeOfBase}))\n` +
                     `        return ${getTypeDecoderFunction(type.baseType)}(ptr);\n` +
                     `}`);
-        case 'function': return `${decoder.name} = (ptr) => {\n todo\n}`;
+        case 'function': return `${decoder.name} = (ptr) => {\n \\ TODO: implement decoder for function\n}`;
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
         case 'literal': throw new Error("Cannot decode literal types")
         case 'array': {
@@ -590,7 +590,7 @@ function mangleTypeForDecoding(type: ir.Type) : string {
             return `string`;
         case 'mapped': return `handle`;
         case 'optional': return `optional_${mangleTypeForDecoding(type.baseType)}`;
-        case 'function': return `function_`; // TODO: handle functions
+        case 'function': return `function_${mangleTypeForDecoding(type.returnType)}_${type.parameters.map(p => mangleTypeForDecoding(p.type)).join("_")}`;
         case 'unknown': return `unknown`; // TODO: can't actually happen, throw in future
         case 'literal': return getSafeIdentifier(type.name.replace("\"",""))
         case 'array': return `array_${mangleTypeForDecoding(type.elementType)}`;
